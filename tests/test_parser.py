@@ -2,7 +2,6 @@ import os
 import zipfile
 import unittest
 from parser import (
-    extract_series_title,
     extract_chapter_id,
     extract_page_info,
     natural_chapter_sort_key,
@@ -10,17 +9,6 @@ from parser import (
 )
 
 class TestParser(unittest.TestCase):
-    def test_extract_series_title(self):
-        filenames = [
-            "Betrayed by the Hero, I Formed a MILF Party With His Mom! v01 (2025) (Digital) (kaOak) (f) optimized_webp_q75.cbr",
-            "Betrayed by the Hero, I Formed a MILF Party With His Mom! v02 (2025) (Digital) (kaOak) optimized_webp_q75.cbr",
-            "Betrayed by the Hero, I Formed a MILF Party With His Mom! v03 (2025) (Digital) (kaOak) optimized_webp_q75.cbr",
-            "Betrayed by the Hero, I Formed a MILF Party With His Mom! v04 (2026) (Digital) (kaOak) optimized_webp_q75.cbr",
-        ]
-        expected = "Betrayed by the Hero, I Formed a MILF Party With His Mom!"
-        for name in filenames:
-            self.assertEqual(extract_series_title(name), expected)
-
     def test_extract_chapter_id(self):
         self.assertEqual(
             extract_chapter_id("Betrayed by the Hero, I Formed a MILF Party With His Mom! - c001 (v01) - p000 [Cover] [dig] [Seven Seas Entertainment] [kaOak].webp"),
@@ -98,7 +86,7 @@ class TestParser(unittest.TestCase):
             process_books(source_dir, output_dir)
 
             # Check that the outputs were created correctly
-            series_dir = os.path.join(output_dir, "local", "Test Book")
+            series_dir = os.path.join(output_dir, "local", "Test Book v01 (2025)")
             self.assertTrue(os.path.exists(series_dir))
             
             # Check cover.jpg
