@@ -5,20 +5,6 @@ import argparse
 from typing import List, Tuple, Dict, Any
 from PIL import Image
 
-def extract_series_title(filename: str) -> str:
-    """
-    Extracts the series title from the CBR filename.
-    Matches everything before the volume signifier (e.g. ' v01', ' Vol.1', ' Vol 1').
-    """
-    name_no_ext = os.path.splitext(filename)[0]
-    match = re.search(r'^(.*?)\s+(?:v\d+|Vol\.\d+|Vol\s+\d+|v[oO]l\.\d+)\b', name_no_ext)
-    if match:
-        return match.group(1).strip()
-    
-    # Fallback: strip standard bracketed/parenthesized tags at the end
-    clean_name = re.sub(r'\s*[\(\[\{].*$', '', name_no_ext)
-    return clean_name.strip()
-
 def extract_chapter_id(filename: str) -> str:
     """
     Extracts chapter identifier (e.g. 'c001', 'c005x1') from a page filename.
@@ -77,6 +63,7 @@ def format_chapter_folder_name(chapter_id: str) -> str:
 def process_books(source_dir: str, output_dir: str) -> None:
     """
     Processes all CBR books in the source directory and organizes them into output folder.
+    Each book is parsed independently and placed inside a folder named after its CBR filename.
     """
     if not os.path.exists(source_dir):
         print(f"Source directory '{source_dir}' does not exist.")
@@ -89,22 +76,20 @@ def process_books(source_dir: str, output_dir: str) -> None:
 
     print(f"Found {len(cbr_files)} books to process.")
 
-    # Group all pages across all books by series title
-    # Structure: { series_title: [ { 'archive': path, 'name': name, 'chapter': id, 'page': num, 'is_cover': bool } ] }
-    series_pages: Dict[str, List[Dict[str, Any]]] = {}
-
     for file_name in cbr_files:
         archive_path = os.path.join(source_dir, file_name)
-        series_title = extract_series_title(file_name)
-        print(f"Reading '{file_name}' -> Series: '{series_title}'")
+        book_folder_name = os.path.splitext(file_name)[0]
+        print(f"\nProcessing book: '{file_name}'")
 
         if not zipfile.is_zipfile(archive_path):
             print(f"Warning: '{file_name}' is not a valid zip archive (CBR). Skipping.")
             continue
 
-        if series_title not in series_pages:
-            series_pages[series_title] = []
+        book_dir = os.path.join(output_dir, "local", book_folder_name)
+        os.makedirs(book_dir, exist_ok=True)
+        print(f"Output directory: {book_dir}")
 
+        pages: List[Dict[str, Any]] = []
         with zipfile.ZipFile(archive_path, 'r') as z:
             for name in z.namelist():
                 # We only care about webp image files
@@ -113,56 +98,44 @@ def process_books(source_dir: str, output_dir: str) -> None:
                     page_num = extract_page_info(name)
                     is_cov = is_cover_image(name)
 
-                    series_pages[series_title].append({
-                        'archive': archive_path,
+                    pages.append({
                         'name': name,
                         'chapter': chap_id,
                         'page': page_num,
                         'is_cover': is_cov
                     })
 
-    # Process each series
-    for series_title, pages in series_pages.items():
-        print(f"\nProcessing series: '{series_title}'")
-        
-        # Create series directory structure
-        series_dir = os.path.join(output_dir, "local", series_title)
-        os.makedirs(series_dir, exist_ok=True)
-        print(f"Output directory: {series_dir}")
+        if not pages:
+            print("Warning: No webp pages found in this book.")
+            continue
 
         # 1. Handle Cover Page
         cover_page = None
-        # Try to find a page flagged as cover first
         for p in pages:
             if p['is_cover']:
                 cover_page = p
                 break
         
-        # Fallback to the first page alphabetically if no cover tag is found
-        if not cover_page and pages:
+        if not cover_page:
             cover_page = min(pages, key=lambda x: x['name'])
 
-        if cover_page:
-            print(f"Generating cover from: {os.path.basename(cover_page['name'])}")
-            with zipfile.ZipFile(cover_page['archive'], 'r') as z:
-                with z.open(cover_page['name']) as zf:
-                    try:
-                        with Image.open(zf) as img:
-                            # Convert to RGB (required for saving as JPEG)
-                            rgb_img = img.convert('RGB')
-                            cover_path = os.path.join(series_dir, "cover.jpg")
-                            rgb_img.save(cover_path, "JPEG")
-                    except Exception as e:
-                        print(f"Error converting cover image: {e}")
-        else:
-            print("Warning: No pages found to generate cover.")
+        print(f"Generating cover from: {os.path.basename(cover_page['name'])}")
+        with zipfile.ZipFile(archive_path, 'r') as z:
+            with z.open(cover_page['name']) as zf:
+                try:
+                    with Image.open(zf) as img:
+                        # Convert to RGB (required for saving as JPEG)
+                        rgb_img = img.convert('RGB')
+                        cover_path = os.path.join(book_dir, "cover.jpg")
+                        rgb_img.save(cover_path, "JPEG")
+                except Exception as e:
+                    print(f"Error converting cover image: {e}")
 
         # 2. Group and process pages by chapter
         chapter_groups: Dict[str, List[Dict[str, Any]]] = {}
         for p in pages:
             chap_id = p['chapter']
             if not chap_id:
-                # If we couldn't extract a chapter ID, place in a default folder or ignore
                 chap_id = "c000"
             if chap_id not in chapter_groups:
                 chapter_groups[chap_id] = []
@@ -177,7 +150,7 @@ def process_books(source_dir: str, output_dir: str) -> None:
             sorted_pages = sorted(chapter_pages, key=lambda x: x['page'])
 
             chapter_folder_name = format_chapter_folder_name(chap_id)
-            chapter_dir = os.path.join(series_dir, chapter_folder_name)
+            chapter_dir = os.path.join(book_dir, chapter_folder_name)
             os.makedirs(chapter_dir, exist_ok=True)
 
             print(f"  Writing {chapter_folder_name} ({len(sorted_pages)} pages)...")
@@ -186,8 +159,7 @@ def process_books(source_dir: str, output_dir: str) -> None:
                 dest_file_name = f"image_{i}.webp"
                 dest_path = os.path.join(chapter_dir, dest_file_name)
 
-                with zipfile.ZipFile(p['archive'], 'r') as z:
-                    # Write the webp file directly without transcoding
+                with zipfile.ZipFile(archive_path, 'r') as z:
                     data = z.read(p['name'])
                     with open(dest_path, 'wb') as df:
                         df.write(data)
