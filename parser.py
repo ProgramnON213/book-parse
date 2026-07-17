@@ -4,6 +4,7 @@ import zipfile
 import argparse
 from typing import List, Tuple, Dict, Any
 from dataclasses import dataclass
+from collections import defaultdict
 from PIL import Image
 
 @dataclass
@@ -175,13 +176,9 @@ def process_books(source_dir: str, output_dir: str) -> None:
                     print(f"Error converting cover image: {e}")
 
                 # 2. Group and process pages by chapter
-                chapter_groups: Dict[str, List[PageInfo]] = {}
+                chapter_groups = defaultdict(list)
                 for p in pages:
-                    chap_id = p.chapter
-                    if not chap_id:
-                        chap_id = "c000"
-                    if chap_id not in chapter_groups:
-                        chapter_groups[chap_id] = []
+                    chap_id = p.chapter or "c000"
                     chapter_groups[chap_id].append(p)
 
                 # Sort chapter IDs naturally
