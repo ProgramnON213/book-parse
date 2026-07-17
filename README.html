@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Documentation and usage guide for the CBR Book Parser - a utility to extract and organize webp comic books.">
+    <title>CBR Book Parser - Documentation</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-color: #0d0f14;
+            --card-bg: rgba(25, 28, 41, 0.65);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --accent-primary: #8b5cf6;
+            --accent-secondary: #a78bfa;
+            --accent-gradient: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+            --glow-color: rgba(139, 92, 246, 0.15);
+            --focus-outline: 3px solid #60a5fa;
+        }
+
+        /* Basic resets */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            line-height: 1.6;
+            padding: 2rem 1rem;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+        }
+
+        /* Skip link for keyboard accessibility */
+        .skip-link {
+            position: absolute;
+            top: -40px;
+            left: 0;
+            background: var(--accent-primary);
+            color: white;
+            padding: 8px;
+            z-index: 100;
+            transition: top 0.2s;
+            text-decoration: none;
+            border-radius: 4px;
+        }
+
+        .skip-link:focus {
+            top: 10px;
+            outline: var(--focus-outline);
+        }
+
+        .container {
+            max-width: 850px;
+            width: 100%;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 3rem;
+            backdrop-filter: blur(16px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 40px var(--glow-color);
+            transition: transform 0.3s ease;
+        }
+
+        header {
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 2rem;
+            margin-bottom: 2.5rem;
+        }
+
+        h1 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 2.8rem;
+            font-weight: 800;
+            background: var(--accent-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.02em;
+        }
+
+        .subtitle {
+            font-size: 1.15rem;
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+
+        h2 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.75rem;
+            color: var(--text-primary);
+            margin-top: 2.5rem;
+            margin-bottom: 1rem;
+            border-left: 4px solid var(--accent-primary);
+            padding-left: 0.75rem;
+        }
+
+        p {
+            margin-bottom: 1.25rem;
+            color: var(--text-secondary);
+            font-size: 1.05rem;
+        }
+
+        /* List styles */
+        ul, ol {
+            margin-bottom: 1.5rem;
+            padding-left: 1.5rem;
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+            font-size: 1.05rem;
+        }
+
+        /* Code block and tags */
+        code {
+            font-family: 'Fira Code', monospace;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--border-color);
+            padding: 0.2rem 0.4rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            color: var(--accent-secondary);
+        }
+
+        pre {
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.25rem;
+            overflow-x: auto;
+            margin-bottom: 1.5rem;
+        }
+
+        pre code {
+            background: transparent;
+            border: none;
+            padding: 0;
+            color: #e5e7eb;
+            display: block;
+        }
+
+        /* Accessible and beautiful tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5rem 0;
+            font-size: 1rem;
+            text-align: left;
+        }
+
+        th {
+            background-color: rgba(139, 92, 246, 0.1);
+            color: var(--text-primary);
+            font-weight: 600;
+            padding: 0.75rem 1rem;
+            border-bottom: 2px solid var(--accent-primary);
+        }
+
+        td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+
+        tr:hover td {
+            color: var(--text-primary);
+            background-color: rgba(255, 255, 255, 0.02);
+        }
+
+        /* Focus styles for accessibility */
+        a {
+            color: var(--accent-secondary);
+            text-decoration: none;
+            transition: color 0.2s ease;
+        }
+
+        a:hover, a:focus {
+            color: var(--text-primary);
+            text-decoration: underline;
+        }
+
+        a:focus, button:focus, input:focus {
+            outline: var(--focus-outline);
+            outline-offset: 4px;
+        }
+
+        /* Interactive details summary */
+        details {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        summary {
+            font-weight: 600;
+            cursor: pointer;
+            color: var(--text-primary);
+            user-select: none;
+            outline: none;
+        }
+
+        summary:focus {
+            color: var(--accent-secondary);
+            outline: var(--focus-outline);
+            outline-offset: 2px;
+        }
+
+        /* Accent classes */
+        .highlight {
+            color: var(--accent-secondary);
+            font-weight: 500;
+        }
+
+        @media (max-width: 640px) {
+            .container {
+                padding: 1.5rem;
+            }
+            h1 {
+                font-size: 2.2rem;
+            }
+            td, th {
+                padding: 0.5rem 0.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
+    <div class="container">
+        <header>
+            <h1 id="title">CBR Book Parser</h1>
+            <p class="subtitle">A robust, accessible Python utility to extract and organize manga/comic pages.</p>
+        </header>
+
+        <main id="main-content">
+            <section aria-labelledby="section-objective">
+                <h2 id="section-objective">Objective</h2>
+                <p>The program parses a set of <code>.cbr</code> (renamed <code>.zip</code> archives containing WebP images) files inside a source directory, groups pages by chapter, and organizes them into individual directories. Each book folder is named after its source <code>.cbr</code> file (excluding extension) to provide an immediate 1-to-1 extraction status check.</p>
+            </section>
+
+            <section aria-labelledby="section-structure">
+                <h2 id="section-structure">Output Directory Tree</h2>
+                <p>The parser organizes your library inside the output directory according to this template:</p>
+                <pre><code>output/local/
+└── [CBR filename without extension]/
+    ├── cover.jpg
+    ├── chapter_1/
+    │   ├── image_1.webp
+    │   └── image_n.webp
+    └── chapter_n/
+        ├── image_1.webp
+        └── image_n.webp</code></pre>
+            </section>
+
+            <section aria-labelledby="section-quickstart">
+                <h2 id="section-quickstart">Quick Start</h2>
+                <ol>
+                    <li>Ensure you have <span class="highlight">Python 3.14+</span> installed.</li>
+                    <li>Install the required image processing library:
+                        <pre><code>pip install Pillow</code></pre>
+                    </li>
+                    <li>Place your <code>.cbr</code> files inside the <code>source/</code> folder.</li>
+                    <li>Run the parser via terminal:
+                        <pre><code>python parser.py --source ./source --output ./output</code></pre>
+                    </li>
+                </ol>
+            </section>
+
+            <section aria-labelledby="section-commands">
+                <h2 id="section-commands">Development & Execution Commands</h2>
+                <p>Useful execution and validation commands for users and developers:</p>
+                <table>
+                    <thead>
+                        <tr>
+                            <th scope="col">Command</th>
+                            <th scope="col">Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>python parser.py --source &lt;dir&gt; --output &lt;dir&gt;</code></td>
+                            <td>Runs the extractor script using custom folders.</td>
+                        </tr>
+                        <tr>
+                            <td><code>python -m unittest discover -s tests</code></td>
+                            <td>Executes the full automated unit/integration test suite.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <section aria-labelledby="section-details">
+                <h2 id="section-details">Naming & Conversion Details</h2>
+                <details>
+                    <summary id="details-cover">Cover Page Extraction</summary>
+                    <p style="margin-top: 0.75rem;">The page containing <code>[Cover]</code> or <code>p000</code> in its filename is identified as the cover image. It is converted to RGB JPEG and saved as <code>cover.jpg</code> at the book folder root. This ensures compatibility with local media servers like Komga, Kavita, or Calibre.</p>
+                </details>
+                <details>
+                    <summary id="details-chapters">Chapter Natural Sorting</summary>
+                    <p style="margin-top: 0.75rem;">Chapters are sorted using natural sorting (e.g. <code>c005</code> &lt; <code>c005x1</code> &lt; <code>c006</code>) so special files and extra additions are placed in the correct chronological order. Folder names map to <code>chapter_[number]</code> or <code>chapter_[number]_extra_[suffix]</code>.</p>
+                </details>
+            </section>
+        </main>
+    </div>
+</body>
+</html>
