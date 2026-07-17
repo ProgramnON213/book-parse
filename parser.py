@@ -26,6 +26,18 @@ def sanitize_folder_name(name: str) -> str:
     """
     return re.sub(r'[\\/*?:"<>|]', '_', name)
 
+# Security constraints to prevent Denial of Service (DoS) / Zip Bomb attacks
+MAX_FILE_SIZE = 100 * 1024 * 1024  # Max size for individual extracted files (100 MB)
+MAX_BOOK_UNCOMPRESSED_SIZE = 1024 * 1024 * 1024  # Max total uncompressed size for a book archive (1 GB)
+
+def check_safe_path(base_dir: str, target_path: str) -> bool:
+    """
+    Verifies that target_path is strictly inside base_dir to prevent directory traversal.
+    """
+    abs_base = os.path.abspath(base_dir)
+    abs_target = os.path.abspath(target_path)
+    return os.path.commonpath([abs_base, abs_target]) == abs_base
+
 def extract_chapter_id(filename: str) -> str:
     """
     Extracts chapter identifier (e.g. 'c001', 'c005x1') from a page filename.
@@ -107,12 +119,26 @@ def process_books(source_dir: str, output_dir: str) -> None:
             continue
 
         book_dir = os.path.join(output_dir, "local", book_folder_name)
+        if not check_safe_path(output_dir, book_dir):
+            print(f"Warning: '{file_name}' resolves to an invalid path outside of '{output_dir}'. Skipping.")
+            continue
+
         os.makedirs(book_dir, exist_ok=True)
         print(f"Output directory: {book_dir}")
 
         try:
             pages: List[PageInfo] = []
             with zipfile.ZipFile(archive_path, 'r') as z:
+                # Security: Check decompression size limits (Zip Bomb prevention)
+                total_uncompressed_size = 0
+                for info in z.infolist():
+                    if info.file_size > MAX_FILE_SIZE:
+                        raise ValueError(f"Archive member '{info.filename}' size ({info.file_size} B) exceeds maximum allowed size ({MAX_FILE_SIZE} B).")
+                    total_uncompressed_size += info.file_size
+                
+                if total_uncompressed_size > MAX_BOOK_UNCOMPRESSED_SIZE:
+                    raise ValueError(f"Archive total uncompressed size ({total_uncompressed_size} B) exceeds maximum allowed size ({MAX_BOOK_UNCOMPRESSED_SIZE} B).")
+
                 for name in z.namelist():
                     # We only care about webp image files
                     if name.lower().endswith('.webp'):
@@ -144,11 +170,13 @@ def process_books(source_dir: str, output_dir: str) -> None:
 
                 print(f"Generating cover from: {os.path.basename(cover_page.name)}")
                 try:
+                    cover_path = os.path.join(book_dir, "cover.jpg")
+                    if not check_safe_path(book_dir, cover_path):
+                        raise ValueError(f"Target cover path '{cover_path}' is outside book directory '{book_dir}'.")
                     with z.open(cover_page.name) as zf:
                         with Image.open(zf) as img:
                             # Convert to RGB (required for saving as JPEG)
                             rgb_img = img.convert('RGB')
-                            cover_path = os.path.join(book_dir, "cover.jpg")
                             rgb_img.save(cover_path, "JPEG")
                 except Exception as e:
                     print(f"Error converting cover image: {e}")
@@ -173,6 +201,8 @@ def process_books(source_dir: str, output_dir: str) -> None:
 
                     chapter_folder_name = format_chapter_folder_name(chap_id)
                     chapter_dir = os.path.join(book_dir, chapter_folder_name)
+                    if not check_safe_path(book_dir, chapter_dir):
+                        raise ValueError(f"Chapter directory '{chapter_dir}' is outside book directory '{book_dir}'.")
                     os.makedirs(chapter_dir, exist_ok=True)
 
                     print(f"  Writing {chapter_folder_name} ({len(sorted_pages)} pages)...")
@@ -180,6 +210,8 @@ def process_books(source_dir: str, output_dir: str) -> None:
                     for i, p in enumerate(sorted_pages, start=1):
                         dest_file_name = f"image_{i}.webp"
                         dest_path = os.path.join(chapter_dir, dest_file_name)
+                        if not check_safe_path(chapter_dir, dest_path):
+                            raise ValueError(f"Destination path '{dest_path}' is outside chapter directory '{chapter_dir}'.")
 
                         data = z.read(p.name)
                         with open(dest_path, 'wb') as df:
