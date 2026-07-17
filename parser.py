@@ -3,17 +3,38 @@ import re
 import zipfile
 import argparse
 from typing import List, Tuple, Dict, Any
+from dataclasses import dataclass
 from PIL import Image
+
+@dataclass
+class PageInfo:
+    name: str
+    chapter: str
+    page: int
+    is_cover: bool
+
+# Pre-compiled regular expressions for parsing chapter IDs and page info
+CHAPTER_PATTERN_PREFER = re.compile(r' - (c\d+(?:x\d+)?)\b')
+CHAPTER_PATTERN_FALLBACK = re.compile(r'\b(c\d+(?:x\d+)?)\b')
+PAGE_PATTERN_PREFER = re.compile(r' - p(\d+)')
+PAGE_PATTERN_FALLBACK = re.compile(r'\bp(\d+)')
+NATURAL_SORT_PATTERN = re.compile(r'^c(\d+)(?:x(\d+))?$')
+
+def sanitize_folder_name(name: str) -> str:
+    """
+    Sanitizes a string to make it safe for directory names by replacing invalid characters.
+    """
+    return re.sub(r'[\\/*?:"<>|]', '_', name)
 
 def extract_chapter_id(filename: str) -> str:
     """
     Extracts chapter identifier (e.g. 'c001', 'c005x1') from a page filename.
     """
-    match = re.search(r' - (c\d+(?:x\d+)?)\b', filename)
+    match = CHAPTER_PATTERN_PREFER.search(filename)
     if match:
         return match.group(1)
     
-    match = re.search(r'\b(c\d+(?:x\d+)?)\b', filename)
+    match = CHAPTER_PATTERN_FALLBACK.search(filename)
     if match:
         return match.group(1)
     
@@ -23,11 +44,11 @@ def extract_page_info(filename: str) -> int:
     """
     Extracts the page starting index (e.g. 'p001' -> 1, 'p174-p175' -> 174) from a page filename.
     """
-    match = re.search(r' - p(\d+)', filename)
+    match = PAGE_PATTERN_PREFER.search(filename)
     if match:
         return int(match.group(1))
     
-    match = re.search(r'\bp(\d+)', filename)
+    match = PAGE_PATTERN_FALLBACK.search(filename)
     if match:
         return int(match.group(1))
     
@@ -37,7 +58,7 @@ def natural_chapter_sort_key(chapter_id: str) -> Tuple[int, int]:
     """
     Parses a chapter ID (e.g. 'c005x1') into a tuple for sorting: (chapter_num, extra_num).
     """
-    match = re.match(r'^c(\d+)(?:x(\d+))?$', chapter_id)
+    match = NATURAL_SORT_PATTERN.match(chapter_id)
     if match:
         chapter_num = int(match.group(1))
         extra_num = int(match.group(2)) if match.group(2) else 0
@@ -78,7 +99,7 @@ def process_books(source_dir: str, output_dir: str) -> None:
 
     for file_name in cbr_files:
         archive_path = os.path.join(source_dir, file_name)
-        book_folder_name = os.path.splitext(file_name)[0]
+        book_folder_name = sanitize_folder_name(os.path.splitext(file_name)[0])
         print(f"\nProcessing book: '{file_name}'")
 
         if not zipfile.is_zipfile(archive_path):
@@ -89,7 +110,7 @@ def process_books(source_dir: str, output_dir: str) -> None:
         os.makedirs(book_dir, exist_ok=True)
         print(f"Output directory: {book_dir}")
 
-        pages: List[Dict[str, Any]] = []
+        pages: List[PageInfo] = []
         with zipfile.ZipFile(archive_path, 'r') as z:
             for name in z.namelist():
                 # We only care about webp image files
@@ -98,12 +119,12 @@ def process_books(source_dir: str, output_dir: str) -> None:
                     page_num = extract_page_info(name)
                     is_cov = is_cover_image(name)
 
-                    pages.append({
-                        'name': name,
-                        'chapter': chap_id,
-                        'page': page_num,
-                        'is_cover': is_cov
-                    })
+                    pages.append(PageInfo(
+                        name=name,
+                        chapter=chap_id,
+                        page=page_num,
+                        is_cover=is_cov
+                    ))
 
         if not pages:
             print("Warning: No webp pages found in this book.")
@@ -112,16 +133,16 @@ def process_books(source_dir: str, output_dir: str) -> None:
         # 1. Handle Cover Page
         cover_page = None
         for p in pages:
-            if p['is_cover']:
+            if p.is_cover:
                 cover_page = p
                 break
         
         if not cover_page:
-            cover_page = min(pages, key=lambda x: x['name'])
+            cover_page = min(pages, key=lambda x: x.name)
 
-        print(f"Generating cover from: {os.path.basename(cover_page['name'])}")
+        print(f"Generating cover from: {os.path.basename(cover_page.name)}")
         with zipfile.ZipFile(archive_path, 'r') as z:
-            with z.open(cover_page['name']) as zf:
+            with z.open(cover_page.name) as zf:
                 try:
                     with Image.open(zf) as img:
                         # Convert to RGB (required for saving as JPEG)
@@ -132,9 +153,9 @@ def process_books(source_dir: str, output_dir: str) -> None:
                     print(f"Error converting cover image: {e}")
 
         # 2. Group and process pages by chapter
-        chapter_groups: Dict[str, List[Dict[str, Any]]] = {}
+        chapter_groups: Dict[str, List[PageInfo]] = {}
         for p in pages:
-            chap_id = p['chapter']
+            chap_id = p.chapter
             if not chap_id:
                 chap_id = "c000"
             if chap_id not in chapter_groups:
@@ -147,7 +168,7 @@ def process_books(source_dir: str, output_dir: str) -> None:
         for chap_id in sorted_chapter_ids:
             chapter_pages = chapter_groups[chap_id]
             # Sort pages numerically by page index
-            sorted_pages = sorted(chapter_pages, key=lambda x: x['page'])
+            sorted_pages = sorted(chapter_pages, key=lambda x: x.page)
 
             chapter_folder_name = format_chapter_folder_name(chap_id)
             chapter_dir = os.path.join(book_dir, chapter_folder_name)
@@ -160,7 +181,7 @@ def process_books(source_dir: str, output_dir: str) -> None:
                 dest_path = os.path.join(chapter_dir, dest_file_name)
 
                 with zipfile.ZipFile(archive_path, 'r') as z:
-                    data = z.read(p['name'])
+                    data = z.read(p.name)
                     with open(dest_path, 'wb') as df:
                         df.write(data)
 
