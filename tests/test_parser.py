@@ -205,6 +205,120 @@ class TestParser(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(series_dir, "cover.jpg")))
             self.assertTrue(os.path.exists(os.path.join(series_dir, "chapter_1", "image_1.webp")))
 
+    def test_process_books_cbz_and_formats(self):
+        import tempfile
+        import shutil
+        from PIL import Image
+        import io
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_dir = os.path.join(tmp_dir, "source")
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(source_dir)
+            os.makedirs(output_dir)
+
+            # Generate 1x1 image bytes for different formats
+            img = Image.new('RGB', (1, 1), color='blue')
+            
+            webp_buffer = io.BytesIO()
+            img.save(webp_buffer, format='WEBP')
+            webp_bytes = webp_buffer.getvalue()
+
+            png_buffer = io.BytesIO()
+            img.save(png_buffer, format='PNG')
+            png_bytes = png_buffer.getvalue()
+
+            jpg_buffer = io.BytesIO()
+            img.save(jpg_buffer, format='JPEG')
+            jpg_bytes = jpg_buffer.getvalue()
+
+            # Create dummy CBZ file (since it's a zip file)
+            cbz_name = "Cbz Book v02 (2026).cbz"
+            cbz_path = os.path.join(source_dir, cbz_name)
+            with zipfile.ZipFile(cbz_path, 'w') as z:
+                # Cover is a PNG image
+                z.writestr("Cbz Book - c001 (v01) - p000 [Cover].png", png_bytes)
+                # Page 1 is a WebP image
+                z.writestr("Cbz Book - c001 (v01) - p001.webp", webp_bytes)
+                # Page 2 is a JPG image
+                z.writestr("Cbz Book - c001 (v01) - p002.jpg", jpg_bytes)
+                # Page 3 is a PNG image
+                z.writestr("Cbz Book - c002 (v01) - p003.png", png_bytes)
+
+            from parser import process_books
+            process_books(source_dir, output_dir)
+
+            # Check that the outputs were created correctly
+            series_dir = os.path.join(output_dir, "local", "Cbz Book v02 (2026)")
+            self.assertTrue(os.path.exists(series_dir))
+            
+            # Check cover.jpg (should be JPEG, converted from PNG cover)
+            cover_path = os.path.join(series_dir, "cover.jpg")
+            self.assertTrue(os.path.exists(cover_path))
+            with Image.open(cover_path) as cover_img:
+                self.assertEqual(cover_img.format, "JPEG")
+
+            # Check chapter folders
+            ch1_dir = os.path.join(series_dir, "chapter_1")
+            ch2_dir = os.path.join(series_dir, "chapter_2")
+            self.assertTrue(os.path.exists(ch1_dir))
+            self.assertTrue(os.path.exists(ch2_dir))
+
+            # Check page extraction, verifying the original formats are kept
+            # Sorted pages in c001:
+            # 1. p000 [Cover].png -> image_1.png
+            # 2. p001.webp        -> image_2.webp
+            # 3. p002.jpg         -> image_3.jpg
+            # Sorted pages in c002:
+            # 1. p003.png         -> image_1.png
+            self.assertTrue(os.path.exists(os.path.join(ch1_dir, "image_1.png")))
+            self.assertTrue(os.path.exists(os.path.join(ch1_dir, "image_2.webp")))
+            self.assertTrue(os.path.exists(os.path.join(ch1_dir, "image_3.jpg")))
+            self.assertTrue(os.path.exists(os.path.join(ch2_dir, "image_1.png")))
+
+    def test_process_books_cover_transparency(self):
+        import tempfile
+        from PIL import Image
+        import io
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_dir = os.path.join(tmp_dir, "source")
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(source_dir)
+            os.makedirs(output_dir)
+
+            # Generate transparent 1x1 PNG cover image (RGBA)
+            img = Image.new('RGBA', (1, 1), color=(0, 0, 255, 128))
+            png_buffer = io.BytesIO()
+            img.save(png_buffer, format='PNG')
+            png_bytes = png_buffer.getvalue()
+
+            # Create dummy CBZ file
+            cbz_name = "Transparent Book.cbz"
+            cbz_path = os.path.join(source_dir, cbz_name)
+            with zipfile.ZipFile(cbz_path, 'w') as z:
+                z.writestr("Transparent Book - c001 - p000 [Cover].png", png_bytes)
+                z.writestr("Transparent Book - c001 - p001.png", png_bytes)
+
+            from parser import process_books
+            process_books(source_dir, output_dir)
+
+            # Check cover is generated and converted to JPEG (without transparent details crashing)
+            series_dir = os.path.join(output_dir, "local", "Transparent Book")
+            cover_path = os.path.join(series_dir, "cover.jpg")
+            self.assertTrue(os.path.exists(cover_path))
+            with Image.open(cover_path) as cover_img:
+                self.assertEqual(cover_img.format, "JPEG")
+
+    def test_check_safe_path_exception(self):
+        from unittest.mock import patch
+        with patch('os.path.commonpath') as mock_commonpath:
+            # Force os.path.commonpath to raise ValueError
+            mock_commonpath.side_effect = ValueError("Paths don't have the same drive")
+            # Should handle exception and return False, not crash
+            result = check_safe_path("C:\\base", "D:\\target")
+            self.assertFalse(result)
+
 
 if __name__ == "__main__":
     unittest.main()

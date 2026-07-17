@@ -2,6 +2,7 @@ import os
 import re
 import zipfile
 import argparse
+import shutil
 from typing import List, Tuple, Dict, Any
 from dataclasses import dataclass
 from collections import defaultdict
@@ -34,10 +35,14 @@ MAX_BOOK_UNCOMPRESSED_SIZE = 1024 * 1024 * 1024  # Max total uncompressed size f
 def check_safe_path(base_dir: str, target_path: str) -> bool:
     """
     Verifies that target_path is strictly inside base_dir to prevent directory traversal.
+    Resolves symbolic links and handles different drives on Windows safely.
     """
-    abs_base = os.path.abspath(base_dir)
-    abs_target = os.path.abspath(target_path)
-    return os.path.commonpath([abs_base, abs_target]) == abs_base
+    abs_base = os.path.realpath(base_dir)
+    abs_target = os.path.realpath(target_path)
+    try:
+        return os.path.commonpath([abs_base, abs_target]) == abs_base
+    except ValueError:
+        return False
 
 def extract_chapter_id(filename: str) -> str:
     """
@@ -94,128 +99,136 @@ def format_chapter_folder_name(chapter_id: str) -> str:
         return f"chapter_{chapter_num}_extra_{extra_num}"
     return f"chapter_{chapter_num}"
 
+def process_single_book(archive_path: str, output_dir: str) -> None:
+    """
+    Processes a single CBR/CBZ book archive.
+    """
+    file_name = os.path.basename(archive_path)
+    book_folder_name = sanitize_folder_name(os.path.splitext(file_name)[0])
+
+    try:
+        if not zipfile.is_zipfile(archive_path):
+            print(f"Warning: '{file_name}' is not a valid zip archive (CBR/CBZ). Skipping.")
+            return
+
+        book_dir = os.path.join(output_dir, "local", book_folder_name)
+        if not check_safe_path(output_dir, book_dir):
+            print(f"Warning: '{file_name}' resolves to an invalid path outside of '{output_dir}'. Skipping.")
+            return
+
+        pages: List[PageInfo] = []
+        with zipfile.ZipFile(archive_path, 'r') as z:
+            # Security: Check decompression size limits (Zip Bomb prevention) and filter pages in one pass
+            total_uncompressed_size = 0
+            for info in z.infolist():
+                if info.file_size > MAX_FILE_SIZE:
+                    raise ValueError(f"Archive member '{info.filename}' size ({info.file_size} B) exceeds maximum allowed size ({MAX_FILE_SIZE} B).")
+                total_uncompressed_size += info.file_size
+                
+                # We care about webp, jpg, jpeg, and png image files
+                if info.filename.lower().endswith(('.webp', '.jpg', '.jpeg', '.png')):
+                    base_name = os.path.basename(info.filename)
+                    pages.append(PageInfo(
+                        name=info.filename,
+                        chapter=extract_chapter_id(base_name),
+                        page=extract_page_info(base_name),
+                        is_cover=is_cover_image(base_name)
+                    ))
+            
+            if total_uncompressed_size > MAX_BOOK_UNCOMPRESSED_SIZE:
+                raise ValueError(f"Archive total uncompressed size ({total_uncompressed_size} B) exceeds maximum allowed size ({MAX_BOOK_UNCOMPRESSED_SIZE} B).")
+
+            if not pages:
+                print("Warning: No matching image pages found in this book.")
+                return
+
+            # Create book directory only when we know we have valid pages to write
+            os.makedirs(book_dir, exist_ok=True)
+            print(f"Output directory: {book_dir}")
+
+            # 1. Handle Cover Page
+            cover_page = next((p for p in pages if p.is_cover), min(pages, key=lambda x: x.name))
+
+            print(f"Generating cover from: {os.path.basename(cover_page.name)}")
+            try:
+                cover_path = os.path.join(book_dir, "cover.jpg")
+                if not check_safe_path(book_dir, cover_path):
+                    raise ValueError(f"Target cover path '{cover_path}' is outside book directory '{book_dir}'.")
+                with z.open(cover_page.name) as zf:
+                    with Image.open(zf) as img:
+                        # Handle transparency for PNG/WebP cover images
+                        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+                            background = Image.new('RGB', img.size, (255, 255, 255))
+                            background.paste(img, mask=img.split()[-1])
+                            rgb_img = background
+                        else:
+                            rgb_img = img.convert('RGB')
+                        rgb_img.save(cover_path, "JPEG")
+            except Exception as e:
+                print(f"Error converting cover image: {e}")
+
+            # 2. Group and process pages by chapter
+            chapter_groups = defaultdict(list)
+            for p in pages:
+                chap_id = p.chapter or "c000"
+                chapter_groups[chap_id].append(p)
+
+            # Sort chapter IDs naturally
+            sorted_chapter_ids = sorted(chapter_groups.keys(), key=natural_chapter_sort_key)
+
+            for chap_id in sorted_chapter_ids:
+                chapter_pages = chapter_groups[chap_id]
+                # Sort pages numerically by page index
+                sorted_pages = sorted(chapter_pages, key=lambda x: x.page)
+
+                chapter_folder_name = format_chapter_folder_name(chap_id)
+                chapter_dir = os.path.join(book_dir, chapter_folder_name)
+                if not check_safe_path(book_dir, chapter_dir):
+                    raise ValueError(f"Chapter directory '{chapter_dir}' is outside book directory '{book_dir}'.")
+                os.makedirs(chapter_dir, exist_ok=True)
+
+                print(f"  Writing {chapter_folder_name} ({len(sorted_pages)} pages)...")
+
+                for i, p in enumerate(sorted_pages, start=1):
+                    ext = os.path.splitext(p.name)[1].lower()
+                    dest_file_name = f"image_{i}{ext}"
+                    dest_path = os.path.join(chapter_dir, dest_file_name)
+                    if not check_safe_path(chapter_dir, dest_path):
+                        raise ValueError(f"Destination path '{dest_path}' is outside chapter directory '{chapter_dir}'.")
+
+                    # Stream the file content directly to target to optimize memory
+                    with z.open(p.name) as source, open(dest_path, 'wb') as target:
+                        shutil.copyfileobj(source, target)
+    except zipfile.BadZipFile as e:
+        print(f"Error: '{file_name}' is a corrupted zip archive: {e}. Skipping.")
+    except Exception as e:
+        print(f"Error processing book '{file_name}': {e}. Skipping.")
+
 def process_books(source_dir: str, output_dir: str) -> None:
     """
-    Processes all CBR books in the source directory and organizes them into output folder.
-    Each book is parsed independently and placed inside a folder named after its CBR filename.
+    Processes all CBR and CBZ books in the source directory and organizes them into output folder.
     """
     if not os.path.exists(source_dir):
         print(f"Source directory '{source_dir}' does not exist.")
         return
 
-    cbr_files = sorted([f for f in os.listdir(source_dir) if f.endswith('.cbr')])
-    if not cbr_files:
-        print(f"No .cbr files found in '{source_dir}'.")
+    book_files = sorted([f for f in os.listdir(source_dir) if f.lower().endswith(('.cbr', '.cbz'))])
+    if not book_files:
+        print(f"No .cbr or .cbz files found in '{source_dir}'.")
         return
 
-    print(f"Found {len(cbr_files)} books to process.")
+    print(f"Found {len(book_files)} books to process.")
 
-    for file_name in cbr_files:
+    for file_name in book_files:
         archive_path = os.path.join(source_dir, file_name)
-        book_folder_name = sanitize_folder_name(os.path.splitext(file_name)[0])
         print(f"\nProcessing book: '{file_name}'")
-
-        if not zipfile.is_zipfile(archive_path):
-            print(f"Warning: '{file_name}' is not a valid zip archive (CBR). Skipping.")
-            continue
-
-        book_dir = os.path.join(output_dir, "local", book_folder_name)
-        if not check_safe_path(output_dir, book_dir):
-            print(f"Warning: '{file_name}' resolves to an invalid path outside of '{output_dir}'. Skipping.")
-            continue
-
-        try:
-            pages: List[PageInfo] = []
-            with zipfile.ZipFile(archive_path, 'r') as z:
-                # Security: Check decompression size limits (Zip Bomb prevention)
-                total_uncompressed_size = 0
-                for info in z.infolist():
-                    if info.file_size > MAX_FILE_SIZE:
-                        raise ValueError(f"Archive member '{info.filename}' size ({info.file_size} B) exceeds maximum allowed size ({MAX_FILE_SIZE} B).")
-                    total_uncompressed_size += info.file_size
-                
-                if total_uncompressed_size > MAX_BOOK_UNCOMPRESSED_SIZE:
-                    raise ValueError(f"Archive total uncompressed size ({total_uncompressed_size} B) exceeds maximum allowed size ({MAX_BOOK_UNCOMPRESSED_SIZE} B).")
-
-                os.makedirs(book_dir, exist_ok=True)
-                print(f"Output directory: {book_dir}")
-
-                for name in z.namelist():
-                    # We only care about webp image files
-                    if name.lower().endswith('.webp'):
-                        base_name = os.path.basename(name)
-                        chap_id = extract_chapter_id(base_name)
-                        page_num = extract_page_info(base_name)
-                        is_cov = is_cover_image(base_name)
-
-                        pages.append(PageInfo(
-                            name=name,
-                            chapter=chap_id,
-                            page=page_num,
-                            is_cover=is_cov
-                        ))
-
-                if not pages:
-                    print("Warning: No webp pages found in this book.")
-                    continue
-
-                # 1. Handle Cover Page
-                cover_page = next((p for p in pages if p.is_cover), min(pages, key=lambda x: x.name))
-
-                print(f"Generating cover from: {os.path.basename(cover_page.name)}")
-                try:
-                    cover_path = os.path.join(book_dir, "cover.jpg")
-                    if not check_safe_path(book_dir, cover_path):
-                        raise ValueError(f"Target cover path '{cover_path}' is outside book directory '{book_dir}'.")
-                    with z.open(cover_page.name) as zf:
-                        with Image.open(zf) as img:
-                            # Convert to RGB (required for saving as JPEG)
-                            rgb_img = img.convert('RGB')
-                            rgb_img.save(cover_path, "JPEG")
-                except Exception as e:
-                    print(f"Error converting cover image: {e}")
-
-                # 2. Group and process pages by chapter
-                chapter_groups = defaultdict(list)
-                for p in pages:
-                    chap_id = p.chapter or "c000"
-                    chapter_groups[chap_id].append(p)
-
-                # Sort chapter IDs naturally
-                sorted_chapter_ids = sorted(chapter_groups.keys(), key=natural_chapter_sort_key)
-
-                for chap_id in sorted_chapter_ids:
-                    chapter_pages = chapter_groups[chap_id]
-                    # Sort pages numerically by page index
-                    sorted_pages = sorted(chapter_pages, key=lambda x: x.page)
-
-                    chapter_folder_name = format_chapter_folder_name(chap_id)
-                    chapter_dir = os.path.join(book_dir, chapter_folder_name)
-                    if not check_safe_path(book_dir, chapter_dir):
-                        raise ValueError(f"Chapter directory '{chapter_dir}' is outside book directory '{book_dir}'.")
-                    os.makedirs(chapter_dir, exist_ok=True)
-
-                    print(f"  Writing {chapter_folder_name} ({len(sorted_pages)} pages)...")
-
-                    for i, p in enumerate(sorted_pages, start=1):
-                        dest_file_name = f"image_{i}.webp"
-                        dest_path = os.path.join(chapter_dir, dest_file_name)
-                        if not check_safe_path(chapter_dir, dest_path):
-                            raise ValueError(f"Destination path '{dest_path}' is outside chapter directory '{chapter_dir}'.")
-
-                        data = z.read(p.name)
-                        with open(dest_path, 'wb') as df:
-                            df.write(data)
-        except zipfile.BadZipFile as e:
-            print(f"Error: '{file_name}' is a corrupted zip archive: {e}. Skipping.")
-        except Exception as e:
-            print(f"Error processing book '{file_name}': {e}. Skipping.")
+        process_single_book(archive_path, output_dir)
 
     print("\nProcessing complete!")
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Parse CBR books into organized chapters.")
-    parser.add_argument("--source", default="./source", help="Source directory containing .cbr files")
+    parser = argparse.ArgumentParser(description="Parse CBR/CBZ books into organized chapters.")
+    parser.add_argument("--source", default="./source", help="Source directory containing .cbr or .cbz files")
     parser.add_argument("--output", default="./output", help="Output directory to place parsed structure")
     args = parser.parse_args()
 
