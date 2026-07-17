@@ -159,14 +159,7 @@ def process_books(source_dir: str, output_dir: str) -> None:
                     continue
 
                 # 1. Handle Cover Page
-                cover_page = None
-                for p in pages:
-                    if p.is_cover:
-                        cover_page = p
-                        break
-                
-                if not cover_page:
-                    cover_page = min(pages, key=lambda x: x.name)
+                cover_page = next((p for p in pages if p.is_cover), min(pages, key=lambda x: x.name))
 
                 print(f"Generating cover from: {os.path.basename(cover_page.name)}")
                 try:
