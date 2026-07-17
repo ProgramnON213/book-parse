@@ -123,9 +123,6 @@ def process_books(source_dir: str, output_dir: str) -> None:
             print(f"Warning: '{file_name}' resolves to an invalid path outside of '{output_dir}'. Skipping.")
             continue
 
-        os.makedirs(book_dir, exist_ok=True)
-        print(f"Output directory: {book_dir}")
-
         try:
             pages: List[PageInfo] = []
             with zipfile.ZipFile(archive_path, 'r') as z:
@@ -138,6 +135,9 @@ def process_books(source_dir: str, output_dir: str) -> None:
                 
                 if total_uncompressed_size > MAX_BOOK_UNCOMPRESSED_SIZE:
                     raise ValueError(f"Archive total uncompressed size ({total_uncompressed_size} B) exceeds maximum allowed size ({MAX_BOOK_UNCOMPRESSED_SIZE} B).")
+
+                os.makedirs(book_dir, exist_ok=True)
+                print(f"Output directory: {book_dir}")
 
                 for name in z.namelist():
                     # We only care about webp image files
