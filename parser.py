@@ -128,61 +128,59 @@ def process_books(source_dir: str, output_dir: str) -> None:
                             is_cover=is_cov
                         ))
 
-            if not pages:
-                print("Warning: No webp pages found in this book.")
-                continue
+                if not pages:
+                    print("Warning: No webp pages found in this book.")
+                    continue
 
-            # 1. Handle Cover Page
-            cover_page = None
-            for p in pages:
-                if p.is_cover:
-                    cover_page = p
-                    break
-            
-            if not cover_page:
-                cover_page = min(pages, key=lambda x: x.name)
+                # 1. Handle Cover Page
+                cover_page = None
+                for p in pages:
+                    if p.is_cover:
+                        cover_page = p
+                        break
+                
+                if not cover_page:
+                    cover_page = min(pages, key=lambda x: x.name)
 
-            print(f"Generating cover from: {os.path.basename(cover_page.name)}")
-            with zipfile.ZipFile(archive_path, 'r') as z:
-                with z.open(cover_page.name) as zf:
-                    try:
+                print(f"Generating cover from: {os.path.basename(cover_page.name)}")
+                try:
+                    with z.open(cover_page.name) as zf:
                         with Image.open(zf) as img:
                             # Convert to RGB (required for saving as JPEG)
                             rgb_img = img.convert('RGB')
                             cover_path = os.path.join(book_dir, "cover.jpg")
                             rgb_img.save(cover_path, "JPEG")
-                    except Exception as e:
-                        print(f"Error converting cover image: {e}")
+                except Exception as e:
+                    print(f"Error converting cover image: {e}")
 
-            # 2. Group and process pages by chapter
-            chapter_groups: Dict[str, List[PageInfo]] = {}
-            for p in pages:
-                chap_id = p.chapter
-                if not chap_id:
-                    chap_id = "c000"
-                if chap_id not in chapter_groups:
-                    chapter_groups[chap_id] = []
-                chapter_groups[chap_id].append(p)
+                # 2. Group and process pages by chapter
+                chapter_groups: Dict[str, List[PageInfo]] = {}
+                for p in pages:
+                    chap_id = p.chapter
+                    if not chap_id:
+                        chap_id = "c000"
+                    if chap_id not in chapter_groups:
+                        chapter_groups[chap_id] = []
+                    chapter_groups[chap_id].append(p)
 
-            # Sort chapter IDs naturally
-            sorted_chapter_ids = sorted(chapter_groups.keys(), key=natural_chapter_sort_key)
+                # Sort chapter IDs naturally
+                sorted_chapter_ids = sorted(chapter_groups.keys(), key=natural_chapter_sort_key)
 
-            for chap_id in sorted_chapter_ids:
-                chapter_pages = chapter_groups[chap_id]
-                # Sort pages numerically by page index
-                sorted_pages = sorted(chapter_pages, key=lambda x: x.page)
+                for chap_id in sorted_chapter_ids:
+                    chapter_pages = chapter_groups[chap_id]
+                    # Sort pages numerically by page index
+                    sorted_pages = sorted(chapter_pages, key=lambda x: x.page)
 
-                chapter_folder_name = format_chapter_folder_name(chap_id)
-                chapter_dir = os.path.join(book_dir, chapter_folder_name)
-                os.makedirs(chapter_dir, exist_ok=True)
+                    chapter_folder_name = format_chapter_folder_name(chap_id)
+                    chapter_dir = os.path.join(book_dir, chapter_folder_name)
+                    os.makedirs(chapter_dir, exist_ok=True)
 
-                print(f"  Writing {chapter_folder_name} ({len(sorted_pages)} pages)...")
+                    print(f"  Writing {chapter_folder_name} ({len(sorted_pages)} pages)...")
 
-                for i, p in enumerate(sorted_pages, start=1):
-                    dest_file_name = f"image_{i}.webp"
-                    dest_path = os.path.join(chapter_dir, dest_file_name)
+                    for i, p in enumerate(sorted_pages, start=1):
+                        dest_file_name = f"image_{i}.webp"
+                        dest_path = os.path.join(chapter_dir, dest_file_name)
 
-                    with zipfile.ZipFile(archive_path, 'r') as z:
                         data = z.read(p.name)
                         with open(dest_path, 'wb') as df:
                             df.write(data)
