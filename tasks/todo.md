@@ -1,8 +1,8 @@
-# Task List: Code Simplification, Hardening, and Optimization
+# Todo Checklist: ZIP File Support
 
-- [x] Task 1: Refactor `check_safe_path` to resolve symlinks and catch ValueError on Windows drive mismatches.
-- [x] Task 2: Extract `process_single_book` helper function, grouping zip bomb limits checks and page filtering into a single loop, and creating directory only when valid pages exist.
-- [x] Task 3: Stream file extraction using `shutil.copyfileobj`.
-- [x] Task 4: Add transparency handling for cover image conversion to JPEG.
-- [x] Task 5: Verify all unit tests pass, and add new test cases if necessary.
-- [x] Checkpoint: Verify all tests pass
+- [x] Update `parser.py` scanner to include `.zip` files
+- [x] Add digit extraction fallback in `extract_page_info`
+- [x] Update default chapter ID to `c001`
+- [x] Update cover selection fallback to pick first naturally sorted page
+- [x] Add unit test `test_process_books_zip_plain_filenames` in `tests/test_parser.py`
+- [x] Run `python -m unittest discover -s tests` to verify all tests pass

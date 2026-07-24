@@ -1,23 +1,22 @@
-# Implementation Plan: Code Simplification, Hardening, and Optimization
+# Implementation Plan: Add ZIP File Support
 
 ## Overview
-Address issues identified in the code quality review to improve safety, Windows compatibility, memory efficiency, and readability.
+Enhance `parser.py` to support `.zip` comic books alongside `.cbr` and `.cbz` files. Support simple numerical image filenames (`1.jpg`, `2.jpg`, ..., `23.jpg`), filter out non-image files, select the first sorted image as `cover.jpg` when no explicit cover tag exists, and place single-chapter images into `chapter_1`.
 
 ## Architecture Decisions
-- Resolve symbolic links using `os.path.realpath` in path safety verification.
-- Wrap Windows path comparisons in `try-except ValueError` blocks to support multi-drive path boundaries.
-- Extract individual book extraction into a helper function `process_single_book` to keep code modular and simplify control flow.
-- Stream zip members using `shutil.copyfileobj` to prevent memory spikes on large images.
-- Handle transparent cover images safely by pasting them on a white background.
+- Extend `extract_page_info` with a regex digit extraction fallback on filename stems.
+- Use `c001` as the default chapter ID when no chapter tag is present, placing images into `chapter_1`.
+- Update cover selection to fall back to the first naturally sorted image across all chapters.
+- Expand file scanning filter in `process_books` to include `.zip` extensions.
 
 ## Task List
 
-### Phase 1: Implementation
-- [ ] Task 1: Refactor `check_safe_path` to resolve symlinks and catch ValueError on Windows drive mismatches.
-- [ ] Task 2: Extract `process_single_book` helper function, grouping zip bomb limits checks and page filtering into a single loop, and creating directory only when valid pages exist.
-- [ ] Task 3: Stream file extraction using `shutil.copyfileobj`.
-- [ ] Task 4: Add transparency handling for cover image conversion to JPEG.
-- [ ] Task 5: Verify all unit tests pass, and add new test cases if necessary.
+### Phase 1: Core Implementation
+- [ ] Task 1: Update `parser.py` logic to support `.zip` extension, digit fallback for `extract_page_info`, `c001` default chapter, and natural cover fallback.
 
-### Checkpoint: Verification
-- [ ] Automated tests pass successfully.
+### Phase 2: Testing & Verification
+- [ ] Task 2: Add comprehensive unit tests in `tests/test_parser.py` for `.zip` parsing, plain numerical page ordering, non-image file filtering, and automatic cover generation.
+- [ ] Task 3: Run unittest suite and verify 100% test pass rate.
+
+## Verification
+- [ ] Automated tests pass: `python -m unittest discover -s tests`

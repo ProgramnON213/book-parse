@@ -60,13 +60,18 @@ def extract_chapter_id(filename: str) -> str:
 
 def extract_page_info(filename: str) -> int:
     """
-    Extracts the page starting index (e.g. 'p001' -> 1, 'p174-p175' -> 174) from a page filename.
+    Extracts the page starting index (e.g. 'p001' -> 1, 'p174-p175' -> 174, '1.jpg' -> 1) from a page filename.
     """
     match = PAGE_PATTERN_PREFER.search(filename)
     if match:
         return int(match.group(1))
     
     match = PAGE_PATTERN_FALLBACK.search(filename)
+    if match:
+        return int(match.group(1))
+    
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    match = re.search(r'(\d+)', stem)
     if match:
         return int(match.group(1))
     
@@ -101,14 +106,14 @@ def format_chapter_folder_name(chapter_id: str) -> str:
 
 def process_single_book(archive_path: str, output_dir: str) -> None:
     """
-    Processes a single CBR/CBZ book archive.
+    Processes a single CBR/CBZ/ZIP book archive.
     """
     file_name = os.path.basename(archive_path)
     book_folder_name = sanitize_folder_name(os.path.splitext(file_name)[0])
 
     try:
         if not zipfile.is_zipfile(archive_path):
-            print(f"Warning: '{file_name}' is not a valid zip archive (CBR/CBZ). Skipping.")
+            print(f"Warning: '{file_name}' is not a valid zip archive (CBR/CBZ/ZIP). Skipping.")
             return
 
         book_dir = os.path.join(output_dir, "local", book_folder_name)
@@ -125,9 +130,9 @@ def process_single_book(archive_path: str, output_dir: str) -> None:
                     raise ValueError(f"Archive member '{info.filename}' size ({info.file_size} B) exceeds maximum allowed size ({MAX_FILE_SIZE} B).")
                 total_uncompressed_size += info.file_size
                 
-                # We care about webp, jpg, jpeg, and png image files
-                if info.filename.lower().endswith(('.webp', '.jpg', '.jpeg', '.png')):
-                    base_name = os.path.basename(info.filename)
+                base_name = os.path.basename(info.filename)
+                # Ignore directories, hidden files, __MACOSX files, and non-image files
+                if not info.is_dir() and not base_name.startswith('.') and not base_name.startswith('__MACOSX') and info.filename.lower().endswith(('.webp', '.jpg', '.jpeg', '.png')):
                     pages.append(PageInfo(
                         name=info.filename,
                         chapter=extract_chapter_id(base_name),
@@ -147,7 +152,10 @@ def process_single_book(archive_path: str, output_dir: str) -> None:
             print(f"Output directory: {book_dir}")
 
             # 1. Handle Cover Page
-            cover_page = next((p for p in pages if p.is_cover), min(pages, key=lambda x: x.name))
+            cover_page = next((p for p in pages if p.is_cover), None)
+            if cover_page is None:
+                sorted_all_pages = sorted(pages, key=lambda x: (natural_chapter_sort_key(x.chapter or "c001"), x.page, x.name))
+                cover_page = sorted_all_pages[0]
 
             print(f"Generating cover from: {os.path.basename(cover_page.name)}")
             try:
@@ -170,7 +178,7 @@ def process_single_book(archive_path: str, output_dir: str) -> None:
             # 2. Group and process pages by chapter
             chapter_groups = defaultdict(list)
             for p in pages:
-                chap_id = p.chapter or "c000"
+                chap_id = p.chapter or "c001"
                 chapter_groups[chap_id].append(p)
 
             # Sort chapter IDs naturally
@@ -179,7 +187,7 @@ def process_single_book(archive_path: str, output_dir: str) -> None:
             for chap_id in sorted_chapter_ids:
                 chapter_pages = chapter_groups[chap_id]
                 # Sort pages numerically by page index
-                sorted_pages = sorted(chapter_pages, key=lambda x: x.page)
+                sorted_pages = sorted(chapter_pages, key=lambda x: (x.page, x.name))
 
                 chapter_folder_name = format_chapter_folder_name(chap_id)
                 chapter_dir = os.path.join(book_dir, chapter_folder_name)
@@ -206,15 +214,15 @@ def process_single_book(archive_path: str, output_dir: str) -> None:
 
 def process_books(source_dir: str, output_dir: str) -> None:
     """
-    Processes all CBR and CBZ books in the source directory and organizes them into output folder.
+    Processes all CBR, CBZ, and ZIP books in the source directory and organizes them into output folder.
     """
     if not os.path.exists(source_dir):
         print(f"Source directory '{source_dir}' does not exist.")
         return
 
-    book_files = sorted([f for f in os.listdir(source_dir) if f.lower().endswith(('.cbr', '.cbz'))])
+    book_files = sorted([f for f in os.listdir(source_dir) if f.lower().endswith(('.cbr', '.cbz', '.zip'))])
     if not book_files:
-        print(f"No .cbr or .cbz files found in '{source_dir}'.")
+        print(f"No .cbr, .cbz, or .zip files found in '{source_dir}'.")
         return
 
     print(f"Found {len(book_files)} books to process.")
@@ -227,12 +235,13 @@ def process_books(source_dir: str, output_dir: str) -> None:
     print("\nProcessing complete!")
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Parse CBR/CBZ books into organized chapters.")
-    parser.add_argument("--source", default="./source", help="Source directory containing .cbr or .cbz files")
+    parser = argparse.ArgumentParser(description="Parse CBR/CBZ/ZIP books into organized chapters.")
+    parser.add_argument("--source", default="./source", help="Source directory containing .cbr, .cbz, or .zip files")
     parser.add_argument("--output", default="./output", help="Output directory to place parsed structure")
     args = parser.parse_args()
 
     process_books(args.source, args.output)
+
 
 if __name__ == "__main__":
     main()

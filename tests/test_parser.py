@@ -319,7 +319,65 @@ class TestParser(unittest.TestCase):
             result = check_safe_path("C:\\base", "D:\\target")
             self.assertFalse(result)
 
+    def test_process_books_zip_plain_filenames(self):
+        import tempfile
+        from PIL import Image
+        import io
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_dir = os.path.join(tmp_dir, "source")
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(source_dir)
+            os.makedirs(output_dir)
+
+            # Generate 1x1 image bytes
+            img = Image.new('RGB', (1, 1), color='green')
+            jpg_buffer = io.BytesIO()
+            img.save(jpg_buffer, format='JPEG')
+            jpg_bytes = jpg_buffer.getvalue()
+
+            # Create dummy .zip file with plain numerical image names and non-image files
+            zip_name = "Plain Numbers Book.zip"
+            zip_path = os.path.join(source_dir, zip_name)
+            with zipfile.ZipFile(zip_path, 'w') as z:
+                # Non-image files that should be ignored
+                z.writestr("README.txt", "Some text file content")
+                z.writestr(".DS_Store", "dummy macos system file")
+                
+                # Plain numerical image files (written out of order)
+                z.writestr("10.jpg", jpg_bytes)
+                z.writestr("1.jpg", jpg_bytes)
+                z.writestr("2.jpg", jpg_bytes)
+                z.writestr("23.jpg", jpg_bytes)
+
+            from parser import process_books
+            process_books(source_dir, output_dir)
+
+            # Check that output directory was created
+            series_dir = os.path.join(output_dir, "local", "Plain Numbers Book")
+            self.assertTrue(os.path.exists(series_dir))
+            
+            # Cover image should be created from the first image (1.jpg)
+            cover_path = os.path.join(series_dir, "cover.jpg")
+            self.assertTrue(os.path.exists(cover_path))
+            with Image.open(cover_path) as cover_img:
+                self.assertEqual(cover_img.format, "JPEG")
+
+            # Default chapter folder should be chapter_1
+            ch1_dir = os.path.join(series_dir, "chapter_1")
+            self.assertTrue(os.path.exists(ch1_dir))
+
+            # Images in chapter_1 should be sorted naturally: 1.jpg -> image_1, 2.jpg -> image_2, 10.jpg -> image_3, 23.jpg -> image_4
+            self.assertTrue(os.path.exists(os.path.join(ch1_dir, "image_1.jpg")))
+            self.assertTrue(os.path.exists(os.path.join(ch1_dir, "image_2.jpg")))
+            self.assertTrue(os.path.exists(os.path.join(ch1_dir, "image_3.jpg")))
+            self.assertTrue(os.path.exists(os.path.join(ch1_dir, "image_4.jpg")))
+            # Verify exactly 4 image files extracted in chapter_1
+            ch1_files = [f for f in os.listdir(ch1_dir) if f.startswith("image_")]
+            self.assertEqual(len(ch1_files), 4)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
