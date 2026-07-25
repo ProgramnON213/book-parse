@@ -5,6 +5,7 @@ import zipfile
 import argparse
 import shutil
 import datetime
+from functools import lru_cache
 from typing import List, Tuple, Dict, Any, Optional
 from dataclasses import dataclass
 from collections import defaultdict
@@ -99,39 +100,28 @@ def archive_source_file(source_file_path: str, archive_dir: str, base_dir: str =
     shutil.move(source_file_path, dest_path)
     return dest_path
 
+@lru_cache(maxsize=1024)
 def extract_chapter_id(filename: str) -> str:
     """
     Extracts chapter identifier (e.g. 'c001', 'c005x1') from a page filename.
     """
-    match = CHAPTER_PATTERN_PREFER.search(filename)
-    if match:
-        return match.group(1)
-    
-    match = CHAPTER_PATTERN_FALLBACK.search(filename)
-    if match:
-        return match.group(1)
-    
-    return ""
+    match = CHAPTER_PATTERN_PREFER.search(filename) or CHAPTER_PATTERN_FALLBACK.search(filename)
+    return match.group(1) if match else ""
 
+@lru_cache(maxsize=1024)
 def extract_page_info(filename: str) -> int:
     """
     Extracts the page starting index (e.g. 'p001' -> 1, 'p174-p175' -> 174, '1.jpg' -> 1) from a page filename.
     """
-    match = PAGE_PATTERN_PREFER.search(filename)
-    if match:
-        return int(match.group(1))
-    
-    match = PAGE_PATTERN_FALLBACK.search(filename)
+    match = PAGE_PATTERN_PREFER.search(filename) or PAGE_PATTERN_FALLBACK.search(filename)
     if match:
         return int(match.group(1))
     
     stem = os.path.splitext(os.path.basename(filename))[0]
     match = re.search(r'(\d+)', stem)
-    if match:
-        return int(match.group(1))
-    
-    return 0
+    return int(match.group(1)) if match else 0
 
+@lru_cache(maxsize=1024)
 def natural_chapter_sort_key(chapter_id: str) -> Tuple[int, int]:
     """
     Parses a chapter ID (e.g. 'c005x1') into a tuple for sorting: (chapter_num, extra_num).
@@ -149,6 +139,7 @@ def is_cover_image(filename: str) -> bool:
     """
     return "[Cover]" in filename or "p000" in filename
 
+@lru_cache(maxsize=1024)
 def format_chapter_folder_name(chapter_id: str) -> str:
     """
     Formats the chapter folder name based on the chapter ID.
@@ -244,6 +235,41 @@ def group_pages_by_toc(pages: List[PageInfo], toc_data: Dict[str, Any]) -> Dict[
     return chapter_groups
 
 
+def _save_cover_image(z: zipfile.ZipFile, cover_page_name: str, book_dir: str) -> None:
+    """
+    Extracts and converts the cover image to cover.jpg inside book_dir.
+    Handles color mode conversions and transparency safely.
+    """
+    cover_path = _safe_join(book_dir, "cover.jpg")
+    with z.open(cover_page_name) as zf, Image.open(zf) as img:
+        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+            background = Image.new('RGB', img.size, (255, 255, 255))
+            background.paste(img, mask=img.split()[-1])
+            rgb_img = background
+        else:
+            rgb_img = img.convert('RGB')
+        rgb_img.save(cover_path, "JPEG")
+
+def _extract_and_write_pages(z: zipfile.ZipFile, book_dir: str, chapter_groups: Dict[str, List[PageInfo]]) -> None:
+    """
+    Extracts chapter image files into output chapter directories using 1 MB stream buffers.
+    """
+    BUFFER_SIZE = 1024 * 1024  # 1 MB stream buffer for high-performance I/O
+    sorted_chapter_ids = sorted(chapter_groups.keys(), key=natural_chapter_sort_key)
+
+    for chap_id in sorted_chapter_ids:
+        sorted_pages = sorted(chapter_groups[chap_id], key=lambda x: (x.page, x.name))
+        chapter_folder_name = format_chapter_folder_name(chap_id)
+        chapter_dir = _safe_join(book_dir, chapter_folder_name)
+        os.makedirs(chapter_dir, exist_ok=True)
+
+        print(f"  Writing {chapter_folder_name} ({len(sorted_pages)} pages)...")
+        for i, p in enumerate(sorted_pages, start=1):
+            ext = os.path.splitext(p.name)[1].lower()
+            dest_path = _safe_join(chapter_dir, f"image_{i}{ext}")
+            with z.open(p.name) as source, open(dest_path, 'wb') as target:
+                shutil.copyfileobj(source, target, length=BUFFER_SIZE)
+
 def process_single_book(archive_path: str, output_dir: str) -> bool:
     """
     Processes a single CBR/CBZ/ZIP book archive. Returns True if successfully parsed, False otherwise.
@@ -256,14 +282,10 @@ def process_single_book(archive_path: str, output_dir: str) -> bool:
             print(f"Warning: '{file_name}' is not a valid zip archive (CBR/CBZ/ZIP). Skipping.")
             return False
 
-        book_dir = os.path.join(output_dir, "local", book_folder_name)
-        if not check_safe_path(output_dir, book_dir):
-            print(f"Warning: '{file_name}' resolves to an invalid path outside of '{output_dir}'. Skipping.")
-            return False
+        book_dir = _safe_join(output_dir, "local", book_folder_name)
 
         pages: List[PageInfo] = []
         with zipfile.ZipFile(archive_path, 'r') as z:
-            # Security: Check decompression size limits (Zip Bomb prevention) and filter pages in one pass
             total_uncompressed_size = 0
             for info in z.infolist():
                 if info.file_size > MAX_FILE_SIZE:
@@ -271,7 +293,6 @@ def process_single_book(archive_path: str, output_dir: str) -> bool:
                 total_uncompressed_size += info.file_size
                 
                 base_name = os.path.basename(info.filename)
-                # Ignore directories, hidden files, __MACOSX files, and non-image files
                 if not info.is_dir() and not base_name.startswith('.') and not base_name.startswith('__MACOSX') and info.filename.lower().endswith(('.webp', '.jpg', '.jpeg', '.png')):
                     pages.append(PageInfo(
                         name=info.filename,
@@ -287,7 +308,6 @@ def process_single_book(archive_path: str, output_dir: str) -> bool:
                 print("Warning: No matching image pages found in this book.")
                 return False
 
-            # Create book directory only when we know we have valid pages to write
             os.makedirs(book_dir, exist_ok=True)
             print(f"Output directory: {book_dir}")
 
@@ -299,19 +319,7 @@ def process_single_book(archive_path: str, output_dir: str) -> bool:
 
             print(f"Generating cover from: {os.path.basename(cover_page.name)}")
             try:
-                cover_path = os.path.join(book_dir, "cover.jpg")
-                if not check_safe_path(book_dir, cover_path):
-                    raise ValueError(f"Target cover path '{cover_path}' is outside book directory '{book_dir}'.")
-                with z.open(cover_page.name) as zf:
-                    with Image.open(zf) as img:
-                        # Handle transparency for PNG/WebP cover images
-                        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
-                            background = Image.new('RGB', img.size, (255, 255, 255))
-                            background.paste(img, mask=img.split()[-1])
-                            rgb_img = background
-                        else:
-                            rgb_img = img.convert('RGB')
-                        rgb_img.save(cover_path, "JPEG")
+                _save_cover_image(z, cover_page.name, book_dir)
             except Exception as e:
                 print(f"Error converting cover image: {e}")
 
@@ -328,39 +336,15 @@ def process_single_book(archive_path: str, output_dir: str) -> bool:
 
             if raw_toc_str:
                 try:
-                    toc_out_path = os.path.join(book_dir, "toc.json")
-                    if check_safe_path(book_dir, toc_out_path):
-                        with open(toc_out_path, "w", encoding="utf-8") as f:
-                            f.write(raw_toc_str)
+                    toc_out_path = _safe_join(book_dir, "toc.json")
+                    with open(toc_out_path, "w", encoding="utf-8") as f:
+                        f.write(raw_toc_str)
                 except Exception as e:
                     print(f"Warning: Failed to write output toc.json: {e}")
 
-            # Sort chapter IDs naturally
-            sorted_chapter_ids = sorted(chapter_groups.keys(), key=natural_chapter_sort_key)
+            # 3. Extract & write chapter image files
+            _extract_and_write_pages(z, book_dir, chapter_groups)
 
-            for chap_id in sorted_chapter_ids:
-                chapter_pages = chapter_groups[chap_id]
-                # Sort pages numerically by page index
-                sorted_pages = sorted(chapter_pages, key=lambda x: (x.page, x.name))
-
-                chapter_folder_name = format_chapter_folder_name(chap_id)
-                chapter_dir = os.path.join(book_dir, chapter_folder_name)
-                if not check_safe_path(book_dir, chapter_dir):
-                    raise ValueError(f"Chapter directory '{chapter_dir}' is outside book directory '{book_dir}'.")
-                os.makedirs(chapter_dir, exist_ok=True)
-
-                print(f"  Writing {chapter_folder_name} ({len(sorted_pages)} pages)...")
-
-                for i, p in enumerate(sorted_pages, start=1):
-                    ext = os.path.splitext(p.name)[1].lower()
-                    dest_file_name = f"image_{i}{ext}"
-                    dest_path = os.path.join(chapter_dir, dest_file_name)
-                    if not check_safe_path(chapter_dir, dest_path):
-                        raise ValueError(f"Destination path '{dest_path}' is outside chapter directory '{chapter_dir}'.")
-
-                    # Stream the file content directly to target to optimize memory
-                    with z.open(p.name) as source, open(dest_path, 'wb') as target:
-                        shutil.copyfileobj(source, target)
         return True
     except zipfile.BadZipFile as e:
         print(f"Error: '{file_name}' is a corrupted zip archive: {e}. Skipping.")
