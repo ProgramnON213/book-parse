@@ -24,11 +24,42 @@ PAGE_PATTERN_PREFER = re.compile(r' - p(\d+)')
 PAGE_PATTERN_FALLBACK = re.compile(r'\bp(\d+)')
 NATURAL_SORT_PATTERN = re.compile(r'^c(\d+)(?:x(\d+))?$')
 
+WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+}
+
 def sanitize_folder_name(name: str) -> str:
     """
-    Sanitizes a string to make it safe for directory names by replacing invalid characters.
+    Sanitizes a string to make it safe for directory names by replacing invalid characters,
+    handling Windows reserved filenames, and replacing trailing dots/spaces.
     """
-    return re.sub(r'[\\/*?:"<>|]', '_', name)
+    sanitized = re.sub(r'[\\/*?:"<>|]', '_', name).strip()
+    sanitized = re.sub(r'[\. ]+$', '_', sanitized)
+    if not sanitized:
+        return "_"
+    
+    stem, ext = os.path.splitext(sanitized)
+    if stem.upper() in WINDOWS_RESERVED_NAMES:
+        return f"_{sanitized}_"
+    
+    return sanitized
+
+def _safe_join(base_dir: str, *paths: str) -> str:
+    """
+    Safely joins paths onto base_dir and verifies the result does not escape base_dir.
+    Raises ValueError if target path escapes base_dir.
+    """
+    target = os.path.join(base_dir, *paths)
+    abs_base = os.path.realpath(base_dir)
+    abs_target = os.path.realpath(target)
+    try:
+        if os.path.commonpath([abs_base, abs_target]) != abs_base:
+            raise ValueError(f"Target path '{target}' escapes base directory '{base_dir}'.")
+    except ValueError as e:
+        raise ValueError(f"Target path '{target}' escapes base directory '{base_dir}': {e}")
+    return target
 
 # Security constraints to prevent Denial of Service (DoS) / Zip Bomb attacks
 MAX_FILE_SIZE = 100 * 1024 * 1024  # Max size for individual extracted files (100 MB)

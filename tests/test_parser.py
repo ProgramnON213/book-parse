@@ -581,9 +581,30 @@ class TestParser(unittest.TestCase):
             book_dir = os.path.join(output_dir, "local", "Invalid TOC Book")
             self.assertTrue(os.path.exists(os.path.join(book_dir, "chapter_1")))
 
+    def test_safe_join(self):
+        from parser import _safe_join
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Valid path inside base
+            safe_path = _safe_join(tmp_dir, "subfolder", "file.txt")
+            self.assertTrue(safe_path.startswith(os.path.realpath(tmp_dir)))
+            self.assertTrue(safe_path.endswith("file.txt"))
+
+            # Traversal attempt should raise ValueError
+            with self.assertRaises(ValueError):
+                _safe_join(tmp_dir, "..", "outside.txt")
+
+    def test_sanitize_folder_name_reserved(self):
+        self.assertEqual(sanitize_folder_name("CON"), "_CON_")
+        self.assertEqual(sanitize_folder_name("aux.txt"), "_aux.txt_")
+        self.assertEqual(sanitize_folder_name("Book Name."), "Book Name_")
+        self.assertEqual(sanitize_folder_name("  Book Name  "), "Book Name")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 
