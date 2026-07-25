@@ -69,12 +69,11 @@ MAX_BOOK_UNCOMPRESSED_SIZE = 1024 * 1024 * 1024  # Max total uncompressed size f
 def check_safe_path(base_dir: str, target_path: str) -> bool:
     """
     Verifies that target_path is strictly inside base_dir to prevent directory traversal.
-    Resolves symbolic links and handles different drives on Windows safely.
+    Delegates to _safe_join to eliminate duplicate path resolution logic.
     """
-    abs_base = os.path.realpath(base_dir)
-    abs_target = os.path.realpath(target_path)
     try:
-        return os.path.commonpath([abs_base, abs_target]) == abs_base
+        _safe_join(base_dir, target_path)
+        return True
     except ValueError:
         return False
 
