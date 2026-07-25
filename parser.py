@@ -3,6 +3,7 @@ import re
 import zipfile
 import argparse
 import shutil
+import datetime
 from typing import List, Tuple, Dict, Any
 from dataclasses import dataclass
 from collections import defaultdict
@@ -43,6 +44,28 @@ def check_safe_path(base_dir: str, target_path: str) -> bool:
         return os.path.commonpath([abs_base, abs_target]) == abs_base
     except ValueError:
         return False
+
+def archive_source_file(source_file_path: str, archive_dir: str, base_dir: str = None) -> str:
+    """
+    Moves a processed source file into the archive directory.
+    If a file with the same name exists in archive_dir, appends a timestamp suffix.
+    Optionally checks path safety against base_dir if base_dir is provided.
+    Returns the destination file path.
+    """
+    if base_dir and not check_safe_path(base_dir, archive_dir):
+        raise ValueError(f"Archive directory '{archive_dir}' is outside base directory '{base_dir}'.")
+    
+    os.makedirs(archive_dir, exist_ok=True)
+    filename = os.path.basename(source_file_path)
+    dest_path = os.path.join(archive_dir, filename)
+
+    if os.path.exists(dest_path):
+        name_stem, ext = os.path.splitext(filename)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        dest_path = os.path.join(archive_dir, f"{name_stem}_{timestamp}{ext}")
+
+    shutil.move(source_file_path, dest_path)
+    return dest_path
 
 def extract_chapter_id(filename: str) -> str:
     """

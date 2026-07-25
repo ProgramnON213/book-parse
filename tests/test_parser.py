@@ -8,6 +8,7 @@ from parser import (
     is_cover_image,
     sanitize_folder_name,
     check_safe_path,
+    archive_source_file,
 )
 
 class TestParser(unittest.TestCase):
@@ -375,6 +376,48 @@ class TestParser(unittest.TestCase):
             # Verify exactly 4 image files extracted in chapter_1
             ch1_files = [f for f in os.listdir(ch1_dir) if f.startswith("image_")]
             self.assertEqual(len(ch1_files), 4)
+
+    def test_archive_source_file_success(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_file = os.path.join(tmp_dir, "book.cbz")
+            with open(source_file, "w") as f:
+                f.write("dummy content")
+            archive_dir = os.path.join(tmp_dir, "archive")
+            
+            dest_path = archive_source_file(source_file, archive_dir)
+            self.assertFalse(os.path.exists(source_file))
+            self.assertTrue(os.path.exists(dest_path))
+            self.assertEqual(dest_path, os.path.join(archive_dir, "book.cbz"))
+
+    def test_archive_source_file_collision(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_file = os.path.join(tmp_dir, "book.cbz")
+            with open(source_file, "w") as f:
+                f.write("dummy new content")
+            archive_dir = os.path.join(tmp_dir, "archive")
+            os.makedirs(archive_dir, exist_ok=True)
+            existing_file = os.path.join(archive_dir, "book.cbz")
+            with open(existing_file, "w") as f:
+                f.write("dummy existing content")
+            
+            dest_path = archive_source_file(source_file, archive_dir)
+            self.assertFalse(os.path.exists(source_file))
+            self.assertTrue(os.path.exists(existing_file))
+            self.assertTrue(os.path.exists(dest_path))
+            self.assertNotEqual(dest_path, existing_file)
+            self.assertIn("book_", os.path.basename(dest_path))
+
+    def test_archive_source_file_unsafe_path(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_file = os.path.join(tmp_dir, "book.cbz")
+            with open(source_file, "w") as f:
+                f.write("dummy")
+            unsafe_dir = os.path.join(tmp_dir, "..", "outside_archive")
+            with self.assertRaises(ValueError):
+                archive_source_file(source_file, unsafe_dir, base_dir=tmp_dir)
 
 
 if __name__ == "__main__":
