@@ -1,10 +1,11 @@
 import os
 import re
+import json
 import zipfile
 import argparse
 import shutil
 import datetime
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 from dataclasses import dataclass
 from collections import defaultdict
 from PIL import Image
@@ -125,7 +126,81 @@ def format_chapter_folder_name(chapter_id: str) -> str:
     chapter_num, extra_num = natural_chapter_sort_key(chapter_id)
     if extra_num > 0:
         return f"chapter_{chapter_num}_extra_{extra_num}"
-    return f"chapter_{chapter_num}"
+    if chapter_num != 9999:
+        return f"chapter_{chapter_num}"
+    return sanitize_folder_name(chapter_id)
+
+def load_toc_data(archive_path: str, z: zipfile.ZipFile) -> Tuple[Optional[Dict[str, Any]], str]:
+    """
+    Attempts to locate and parse 'toc.json' from inside the zip archive or alongside archive_path.
+    Returns a tuple of (parsed_json_dict_or_None, raw_json_str_or_empty).
+    """
+    # 1. Search inside zip archive
+    for name in z.namelist():
+        if os.path.basename(name).lower() == "toc.json":
+            try:
+                raw_bytes = z.read(name)
+                raw_str = raw_bytes.decode('utf-8-sig', errors='replace')
+                data = json.loads(raw_str)
+                if isinstance(data, dict) and "chapters" in data and isinstance(data["chapters"], list):
+                    return data, raw_str
+            except Exception as e:
+                print(f"Warning: Found 'toc.json' inside archive but failed to parse: {e}")
+                return None, ""
+
+    # 2. Search alongside archive file in source directory
+    stem = os.path.splitext(archive_path)[0]
+    dir_name = os.path.dirname(archive_path)
+    candidates = [
+        f"{stem}.toc.json",
+        os.path.join(dir_name, "toc.json"),
+    ]
+    for cand in candidates:
+        if os.path.isfile(cand):
+            try:
+                with open(cand, 'r', encoding='utf-8-sig') as f:
+                    raw_str = f.read()
+                    data = json.loads(raw_str)
+                    if isinstance(data, dict) and "chapters" in data and isinstance(data["chapters"], list):
+                        return data, raw_str
+            except Exception as e:
+                print(f"Warning: Found external TOC file '{cand}' but failed to parse: {e}")
+
+    return None, ""
+
+def group_pages_by_toc(pages: List[PageInfo], toc_data: Dict[str, Any]) -> Dict[str, List[PageInfo]]:
+    """
+    Groups page information by Table of Contents chapter definitions using start_page and end_page ranges.
+    Sorted pages are evaluated against 1-indexed page position indices.
+    """
+    sorted_all_pages = sorted(pages, key=lambda x: (natural_chapter_sort_key(x.chapter or "c001"), x.page, x.name))
+    chapters = toc_data.get("chapters", [])
+
+    chapter_groups = defaultdict(list)
+    assigned_page_names = set()
+
+    for idx, chap in enumerate(chapters, start=1):
+        chap_id = chap.get("id") or f"c{idx:03d}"
+        start_p = chap.get("start_page", 1)
+        end_p = chap.get("end_page")
+
+        for i, page_obj in enumerate(sorted_all_pages, start=1):
+            if page_obj.name in assigned_page_names:
+                continue
+
+            in_range = (start_p <= i <= end_p) if end_p is not None else (i >= start_p)
+
+            if in_range:
+                chapter_groups[chap_id].append(page_obj)
+                assigned_page_names.add(page_obj.name)
+
+    unassigned = [p for p in sorted_all_pages if p.name not in assigned_page_names]
+    if unassigned:
+        fallback_id = chapters[0].get("id") if chapters else "c001"
+        chapter_groups[fallback_id].extend(unassigned)
+
+    return chapter_groups
+
 
 def process_single_book(archive_path: str, output_dir: str) -> bool:
     """
@@ -198,11 +273,25 @@ def process_single_book(archive_path: str, output_dir: str) -> bool:
             except Exception as e:
                 print(f"Error converting cover image: {e}")
 
-            # 2. Group and process pages by chapter
-            chapter_groups = defaultdict(list)
-            for p in pages:
-                chap_id = p.chapter or "c001"
-                chapter_groups[chap_id].append(p)
+            # 2. Check for Table of Contents (toc.json) and group pages by chapter
+            toc_data, raw_toc_str = load_toc_data(archive_path, z)
+            if toc_data:
+                print("Found valid Table of Contents (toc.json). Using TOC page ranges for chapter grouping.")
+                chapter_groups = group_pages_by_toc(pages, toc_data)
+            else:
+                chapter_groups = defaultdict(list)
+                for p in pages:
+                    chap_id = p.chapter or "c001"
+                    chapter_groups[chap_id].append(p)
+
+            if raw_toc_str:
+                try:
+                    toc_out_path = os.path.join(book_dir, "toc.json")
+                    if check_safe_path(book_dir, toc_out_path):
+                        with open(toc_out_path, "w", encoding="utf-8") as f:
+                            f.write(raw_toc_str)
+                except Exception as e:
+                    print(f"Warning: Failed to write output toc.json: {e}")
 
             # Sort chapter IDs naturally
             sorted_chapter_ids = sorted(chapter_groups.keys(), key=natural_chapter_sort_key)

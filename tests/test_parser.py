@@ -9,6 +9,8 @@ from parser import (
     sanitize_folder_name,
     check_safe_path,
     archive_source_file,
+    load_toc_data,
+    group_pages_by_toc,
 )
 
 class TestParser(unittest.TestCase):
@@ -459,8 +461,129 @@ class TestParser(unittest.TestCase):
             self.assertEqual(summary["archived"], 1)
             self.assertEqual(summary["failed"], 1)
 
+    def test_load_toc_data_internal(self):
+        import tempfile
+        import json
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            archive_path = os.path.join(tmp_dir, "book.cbz")
+            toc_content = {
+                "title": "Table of Contents",
+                "chapters": [
+                    {"id": "c001", "chapter": "CH 1", "start_page": 1, "end_page": 2},
+                    {"id": "c002", "chapter": "CH 2", "start_page": 3, "end_page": 4}
+                ]
+            }
+            with zipfile.ZipFile(archive_path, 'w') as z:
+                z.writestr("toc.json", json.dumps(toc_content))
+                z.writestr("1.jpg", b"fake")
+
+            with zipfile.ZipFile(archive_path, 'r') as z:
+                toc_data, raw_str = load_toc_data(archive_path, z)
+                self.assertIsNotNone(toc_data)
+                self.assertEqual(len(toc_data["chapters"]), 2)
+                self.assertEqual(toc_data["chapters"][0]["id"], "c001")
+
+    def test_load_toc_data_external(self):
+        import tempfile
+        import json
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            archive_path = os.path.join(tmp_dir, "book.cbz")
+            toc_path = os.path.join(tmp_dir, "book.toc.json")
+            toc_content = {
+                "title": "Table of Contents",
+                "chapters": [
+                    {"id": "c001", "chapter": "CH 1", "start_page": 1, "end_page": 5}
+                ]
+            }
+            with open(toc_path, 'w', encoding='utf-8') as f:
+                json.dump(toc_content, f)
+
+            with zipfile.ZipFile(archive_path, 'w') as z:
+                z.writestr("1.jpg", b"fake")
+
+            with zipfile.ZipFile(archive_path, 'r') as z:
+                toc_data, raw_str = load_toc_data(archive_path, z)
+                self.assertIsNotNone(toc_data)
+                self.assertEqual(toc_data["chapters"][0]["id"], "c001")
+
+    def test_process_book_with_internal_toc_json(self):
+        import tempfile
+        import json
+        from PIL import Image
+        import io
+        from parser import process_books
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_dir = os.path.join(tmp_dir, "source")
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(source_dir)
+            os.makedirs(output_dir)
+
+            img = Image.new('RGB', (1, 1), color='blue')
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG')
+            jpg_bytes = buf.getvalue()
+
+            toc_content = {
+                "title": "Table of Contents",
+                "chapters": [
+                    {"id": "c001", "chapter": "CH 1", "title": "Chapter One", "start_page": 1, "end_page": 2},
+                    {"id": "c002", "chapter": "CH 2", "title": "Chapter Two", "start_page": 3, "end_page": 4}
+                ]
+            }
+
+            book_path = os.path.join(source_dir, "TOC Book.cbz")
+            with zipfile.ZipFile(book_path, 'w') as z:
+                z.writestr("toc.json", json.dumps(toc_content))
+                z.writestr("page1.jpg", jpg_bytes)
+                z.writestr("page2.jpg", jpg_bytes)
+                z.writestr("page3.jpg", jpg_bytes)
+                z.writestr("page4.jpg", jpg_bytes)
+
+            summary = process_books(source_dir, output_dir, archive_dir="")
+            self.assertEqual(summary["successfully_parsed"], 1)
+
+            book_dir = os.path.join(output_dir, "local", "TOC Book")
+            self.assertTrue(os.path.exists(os.path.join(book_dir, "chapter_1")))
+            self.assertTrue(os.path.exists(os.path.join(book_dir, "chapter_2")))
+            self.assertTrue(os.path.exists(os.path.join(book_dir, "toc.json")))
+
+            ch1_files = os.listdir(os.path.join(book_dir, "chapter_1"))
+            ch2_files = os.listdir(os.path.join(book_dir, "chapter_2"))
+            self.assertEqual(len(ch1_files), 2)
+            self.assertEqual(len(ch2_files), 2)
+
+    def test_process_book_with_invalid_toc_json_fallback(self):
+        import tempfile
+        from PIL import Image
+        import io
+        from parser import process_books
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_dir = os.path.join(tmp_dir, "source")
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(source_dir)
+            os.makedirs(output_dir)
+
+            img = Image.new('RGB', (1, 1), color='green')
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG')
+            jpg_bytes = buf.getvalue()
+
+            book_path = os.path.join(source_dir, "Invalid TOC Book.cbz")
+            with zipfile.ZipFile(book_path, 'w') as z:
+                z.writestr("toc.json", "INVALID { JSON")
+                z.writestr("Invalid TOC Book - c001 - p001.jpg", jpg_bytes)
+
+            summary = process_books(source_dir, output_dir, archive_dir="")
+            self.assertEqual(summary["successfully_parsed"], 1)
+
+            book_dir = os.path.join(output_dir, "local", "Invalid TOC Book")
+            self.assertTrue(os.path.exists(os.path.join(book_dir, "chapter_1")))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
