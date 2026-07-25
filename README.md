@@ -53,4 +53,9 @@ output/local/
   - If a file with the same name already exists in the archive destination, a timestamp suffix `_YYYYMMDD_HHMMSS` is appended (e.g. `book_20260725_081443.cbz`).
   - Failed or corrupted files remain in `--source`.
   - At the end of execution, a CLI summary prints total books found, successfully parsed, archived, and failed/skipped counts.
+- **Security & Performance**:
+  - **Path Traversal Protection**: Enforced atomic path bound checks (`_safe_join`) across all directory creation and file writing operations.
+  - **Windows Reserved Names**: Automatically sanitizes Windows reserved filenames (`CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`) and strips trailing dots/spaces.
+  - **DoS Protection**: Checks `MAX_FILE_SIZE` (100 MB) when reading internal or external `toc.json` files.
+  - **Stream Buffering & LRU Caching**: Uses 1 MB stream buffers (`shutil.copyfileobj`) and `@lru_cache` for sort-key functions to maximize extraction speed.
 
