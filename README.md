@@ -28,14 +28,14 @@ output/local/
 3. **Place your books**: Put your `.cbr`, `.cbz`, or `.zip` archives inside the `source/` folder.
 4. **Run the parser**:
    ```bash
-   python parser.py --source ./source --output ./output
+   python parser.py --source ./source --output ./output --archive ./archive
    ```
 
 ## Development Commands
 
 | Command | Description |
 |---------|-------------|
-| `python parser.py --source <dir> --output <dir>` | Runs the parser |
+| `python parser.py --source <dir> --output <dir> [--archive <dir>]` | Runs the parser (archives parsed files by default) |
 | `python -m unittest discover -s tests` | Runs the full automated test suite |
 
 ## Naming Conventions & Logic
@@ -46,4 +46,9 @@ output/local/
   - Extra chapters (e.g., `c005x1`) -> `chapter_5_extra_1`
   - Files without explicit chapter tags default to `chapter_1`.
 - **Pages**: Named sequentially as `image_1.[ext]`, `image_2.[ext]`, etc., keeping their original file extensions (e.g. `.webp`, `.png`, `.jpg`, `.jpeg`), and ordered numerically by page number or numerical filename (e.g. `1.jpg`, `2.jpg`, `10.jpg`). Non-image files (`.txt`, `.nfo`, `.DS_Store`) are automatically ignored.
+- **Source Archiving & Execution Summary**:
+  - Successfully processed book files are moved from `--source` to `--archive` (defaults to `./archive`).
+  - If a file with the same name already exists in the archive destination, a timestamp suffix `_YYYYMMDD_HHMMSS` is appended (e.g. `book_20260725_081443.cbz`).
+  - Failed or corrupted files remain in `--source`.
+  - At the end of execution, a CLI summary prints total books found, successfully parsed, archived, and failed/skipped counts.
 

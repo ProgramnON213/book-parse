@@ -13,7 +13,7 @@ pip install Pillow
 ### Running the Parser
 Run the parsing script:
 ```bash
-python parser.py --source ./source --output ./output
+python parser.py --source ./source --output ./output --archive ./archive
 ```
 
 ### Running Tests
@@ -34,6 +34,7 @@ python -m unittest discover -s tests
    - Standard chapters: `chapter_[number]` (e.g., `chapter_1`).
    - Extra chapters: `chapter_[number]_extra_[suffix]` (e.g., `chapter_5_extra_1`).
 4. **Natural Sorting & Covers**: Sort chapters using natural tuple sorting `(chapter_num, extra_num)`. Pages are sorted numerically by page index/filename stem. If no explicit `[Cover]` or `p000` tag exists, automatically use the first naturally sorted image as `cover.jpg`.
+5. **Source Archiving & Collisions**: Successfully parsed archive files in `--source` are automatically moved to `--archive` (default `./archive`). If a file with the same name already exists in the archive folder, a `_YYYYMMDD_HHMMSS` timestamp suffix is appended to prevent data loss. Corrupted or unparseable files remain in `--source`.
 
 ### Typing & Code Style
 - Use strict typing annotations (e.g., `List`, `Dict`, `Tuple`, `Any` from `typing`).
