@@ -164,13 +164,20 @@ def format_chapter_folder_name(chapter_id: str) -> str:
 def load_toc_data(archive_path: str, z: zipfile.ZipFile) -> Tuple[Optional[Dict[str, Any]], str]:
     """
     Attempts to locate and parse 'toc.json' from inside the zip archive or alongside archive_path.
+    Enforces security size limits (MAX_FILE_SIZE) and filters out hidden/system paths.
     Returns a tuple of (parsed_json_dict_or_None, raw_json_str_or_empty).
     """
     # 1. Search inside zip archive
-    for name in z.namelist():
-        if os.path.basename(name).lower() == "toc.json":
+    for info in z.infolist():
+        parts = info.filename.replace('\\', '/').split('/')
+        is_system_path = any(p.startswith('.') or p.startswith('__MACOSX') for p in parts if p)
+        base = os.path.basename(info.filename)
+        if base.lower() == "toc.json" and not is_system_path:
+            if info.file_size > MAX_FILE_SIZE:
+                print(f"Warning: 'toc.json' inside archive exceeds size limit ({info.file_size} B). Skipping.")
+                return None, ""
             try:
-                raw_bytes = z.read(name)
+                raw_bytes = z.read(info.filename)
                 raw_str = raw_bytes.decode('utf-8-sig', errors='replace')
                 data = json.loads(raw_str)
                 if isinstance(data, dict) and "chapters" in data and isinstance(data["chapters"], list):
@@ -188,6 +195,10 @@ def load_toc_data(archive_path: str, z: zipfile.ZipFile) -> Tuple[Optional[Dict[
     ]
     for cand in candidates:
         if os.path.isfile(cand):
+            file_size = os.path.getsize(cand)
+            if file_size > MAX_FILE_SIZE:
+                print(f"Warning: External TOC file '{cand}' exceeds size limit ({file_size} B). Skipping.")
+                continue
             try:
                 with open(cand, 'r', encoding='utf-8-sig') as f:
                     raw_str = f.read()

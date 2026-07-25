@@ -601,6 +601,37 @@ class TestParser(unittest.TestCase):
         self.assertEqual(sanitize_folder_name("Book Name."), "Book Name_")
         self.assertEqual(sanitize_folder_name("  Book Name  "), "Book Name")
 
+    def test_load_toc_data_oversized_internal(self):
+        import tempfile
+        import parser
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            archive_path = os.path.join(tmp_dir, "book.cbz")
+            with zipfile.ZipFile(archive_path, 'w') as z:
+                z.writestr("toc.json", '{"chapters": []}')
+
+            old_max = parser.MAX_FILE_SIZE
+            parser.MAX_FILE_SIZE = 5  # bytes
+            try:
+                with zipfile.ZipFile(archive_path, 'r') as z:
+                    toc_data, raw_str = load_toc_data(archive_path, z)
+                    self.assertIsNone(toc_data)
+                    self.assertEqual(raw_str, "")
+            finally:
+                parser.MAX_FILE_SIZE = old_max
+
+    def test_load_toc_data_system_dir_ignore(self):
+        import tempfile
+        import json
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            archive_path = os.path.join(tmp_dir, "book.cbz")
+            with zipfile.ZipFile(archive_path, 'w') as z:
+                z.writestr("__MACOSX/toc.json", json.dumps({"chapters": [{"id": "c001"}]}))
+                z.writestr(".hidden/toc.json", json.dumps({"chapters": [{"id": "c002"}]}))
+
+            with zipfile.ZipFile(archive_path, 'r') as z:
+                toc_data, raw_str = load_toc_data(archive_path, z)
+                self.assertIsNone(toc_data)
+
 
 if __name__ == "__main__":
     unittest.main()
