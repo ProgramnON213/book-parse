@@ -127,9 +127,9 @@ def format_chapter_folder_name(chapter_id: str) -> str:
         return f"chapter_{chapter_num}_extra_{extra_num}"
     return f"chapter_{chapter_num}"
 
-def process_single_book(archive_path: str, output_dir: str) -> None:
+def process_single_book(archive_path: str, output_dir: str) -> bool:
     """
-    Processes a single CBR/CBZ/ZIP book archive.
+    Processes a single CBR/CBZ/ZIP book archive. Returns True if successfully parsed, False otherwise.
     """
     file_name = os.path.basename(archive_path)
     book_folder_name = sanitize_folder_name(os.path.splitext(file_name)[0])
@@ -137,12 +137,12 @@ def process_single_book(archive_path: str, output_dir: str) -> None:
     try:
         if not zipfile.is_zipfile(archive_path):
             print(f"Warning: '{file_name}' is not a valid zip archive (CBR/CBZ/ZIP). Skipping.")
-            return
+            return False
 
         book_dir = os.path.join(output_dir, "local", book_folder_name)
         if not check_safe_path(output_dir, book_dir):
             print(f"Warning: '{file_name}' resolves to an invalid path outside of '{output_dir}'. Skipping.")
-            return
+            return False
 
         pages: List[PageInfo] = []
         with zipfile.ZipFile(archive_path, 'r') as z:
@@ -168,7 +168,7 @@ def process_single_book(archive_path: str, output_dir: str) -> None:
 
             if not pages:
                 print("Warning: No matching image pages found in this book.")
-                return
+                return False
 
             # Create book directory only when we know we have valid pages to write
             os.makedirs(book_dir, exist_ok=True)
@@ -230,40 +230,71 @@ def process_single_book(archive_path: str, output_dir: str) -> None:
                     # Stream the file content directly to target to optimize memory
                     with z.open(p.name) as source, open(dest_path, 'wb') as target:
                         shutil.copyfileobj(source, target)
+        return True
     except zipfile.BadZipFile as e:
         print(f"Error: '{file_name}' is a corrupted zip archive: {e}. Skipping.")
+        return False
     except Exception as e:
         print(f"Error processing book '{file_name}': {e}. Skipping.")
+        return False
 
-def process_books(source_dir: str, output_dir: str) -> None:
+def process_books(source_dir: str, output_dir: str, archive_dir: str = "./archive") -> Dict[str, int]:
     """
-    Processes all CBR, CBZ, and ZIP books in the source directory and organizes them into output folder.
+    Processes all CBR, CBZ, and ZIP books in source_dir, organizing them into output_dir.
+    Moves successfully parsed files into archive_dir if specified.
+    Returns a summary dictionary of execution metrics.
     """
+    summary = {
+        "total_found": 0,
+        "successfully_parsed": 0,
+        "archived": 0,
+        "failed": 0,
+    }
+
     if not os.path.exists(source_dir):
         print(f"Source directory '{source_dir}' does not exist.")
-        return
+        return summary
 
     book_files = sorted([f for f in os.listdir(source_dir) if f.lower().endswith(('.cbr', '.cbz', '.zip'))])
     if not book_files:
         print(f"No .cbr, .cbz, or .zip files found in '{source_dir}'.")
-        return
+        return summary
 
+    summary["total_found"] = len(book_files)
     print(f"Found {len(book_files)} books to process.")
 
     for file_name in book_files:
         archive_path = os.path.join(source_dir, file_name)
         print(f"\nProcessing book: '{file_name}'")
-        process_single_book(archive_path, output_dir)
+        success = process_single_book(archive_path, output_dir)
+        if success:
+            summary["successfully_parsed"] += 1
+            if archive_dir:
+                archived_file = archive_source_file(archive_path, archive_dir)
+                summary["archived"] += 1
+                print(f"Archived '{file_name}' -> '{archived_file}'")
+        else:
+            summary["failed"] += 1
 
     print("\nProcessing complete!")
+    print("=" * 50)
+    print("Execution Summary:")
+    print(f"  - Total books found:       {summary['total_found']}")
+    print(f"  - Successfully parsed:     {summary['successfully_parsed']}")
+    print(f"  - Archived:                {summary['archived']}")
+    print(f"  - Failed / Skipped:        {summary['failed']}")
+    print("=" * 50)
+
+    return summary
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Parse CBR/CBZ/ZIP books into organized chapters.")
     parser.add_argument("--source", default="./source", help="Source directory containing .cbr, .cbz, or .zip files")
     parser.add_argument("--output", default="./output", help="Output directory to place parsed structure")
+    parser.add_argument("--archive", default="./archive", help="Archive directory to move processed books (set empty string to disable)")
     args = parser.parse_args()
 
-    process_books(args.source, args.output)
+    process_books(args.source, args.output, archive_dir=args.archive)
 
 
 if __name__ == "__main__":

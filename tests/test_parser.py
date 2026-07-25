@@ -86,7 +86,7 @@ class TestParser(unittest.TestCase):
                 z.writestr("Test Book - c002 (v01) - p002.webp", webp_bytes)
 
             from parser import process_books
-            process_books(source_dir, output_dir)
+            process_books(source_dir, output_dir, archive_dir=os.path.join(tmp_dir, "archive"))
 
             # Check that the outputs were created correctly
             series_dir = os.path.join(output_dir, "local", "Test Book v01 (2025)")
@@ -135,7 +135,7 @@ class TestParser(unittest.TestCase):
 
             from parser import process_books
             # Should not raise exception
-            process_books(source_dir, output_dir)
+            process_books(source_dir, output_dir, archive_dir=os.path.join(tmp_dir, "archive"))
             # Verify no outputs were created
             self.assertEqual(os.listdir(output_dir), [])
 
@@ -168,7 +168,7 @@ class TestParser(unittest.TestCase):
             parser.MAX_FILE_SIZE = 5  # bytes
             try:
                 # Should print error and skip, not crash
-                parser.process_books(source_dir, output_dir)
+                parser.process_books(source_dir, output_dir, archive_dir=os.path.join(tmp_dir, "archive"))
                 # Verify no output directories are created under output/local
                 self.assertFalse(os.path.exists(os.path.join(output_dir, "local", "Test Book")))
             finally:
@@ -199,7 +199,7 @@ class TestParser(unittest.TestCase):
                 z.writestr("Manga/Chapters/c001/Subdir Book - c001 (v01) - p001.webp", webp_bytes)
 
             from parser import process_books
-            process_books(source_dir, output_dir)
+            process_books(source_dir, output_dir, archive_dir=os.path.join(tmp_dir, "archive"))
 
             series_dir = os.path.join(output_dir, "local", "Subdir Book")
             self.assertTrue(os.path.exists(series_dir))
@@ -247,7 +247,7 @@ class TestParser(unittest.TestCase):
                 z.writestr("Cbz Book - c002 (v01) - p003.png", png_bytes)
 
             from parser import process_books
-            process_books(source_dir, output_dir)
+            process_books(source_dir, output_dir, archive_dir=os.path.join(tmp_dir, "archive"))
 
             # Check that the outputs were created correctly
             series_dir = os.path.join(output_dir, "local", "Cbz Book v02 (2026)")
@@ -302,7 +302,7 @@ class TestParser(unittest.TestCase):
                 z.writestr("Transparent Book - c001 - p001.png", png_bytes)
 
             from parser import process_books
-            process_books(source_dir, output_dir)
+            process_books(source_dir, output_dir, archive_dir=os.path.join(tmp_dir, "archive"))
 
             # Check cover is generated and converted to JPEG (without transparent details crashing)
             series_dir = os.path.join(output_dir, "local", "Transparent Book")
@@ -352,7 +352,7 @@ class TestParser(unittest.TestCase):
                 z.writestr("23.jpg", jpg_bytes)
 
             from parser import process_books
-            process_books(source_dir, output_dir)
+            process_books(source_dir, output_dir, archive_dir=os.path.join(tmp_dir, "archive"))
 
             # Check that output directory was created
             series_dir = os.path.join(output_dir, "local", "Plain Numbers Book")
@@ -418,6 +418,46 @@ class TestParser(unittest.TestCase):
             unsafe_dir = os.path.join(tmp_dir, "..", "outside_archive")
             with self.assertRaises(ValueError):
                 archive_source_file(source_file, unsafe_dir, base_dir=tmp_dir)
+
+    def test_process_books_archiving(self):
+        import tempfile
+        from PIL import Image
+        import io
+        from parser import process_books
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_dir = os.path.join(tmp_dir, "source")
+            output_dir = os.path.join(tmp_dir, "output")
+            archive_dir = os.path.join(tmp_dir, "archive")
+            os.makedirs(source_dir)
+            os.makedirs(output_dir)
+
+            img = Image.new('RGB', (1, 1), color='red')
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG')
+            jpg_bytes = buf.getvalue()
+
+            # Valid book
+            valid_path = os.path.join(source_dir, "Valid Book.cbz")
+            with zipfile.ZipFile(valid_path, 'w') as z:
+                z.writestr("1.jpg", jpg_bytes)
+
+            # Corrupt book
+            corrupt_path = os.path.join(source_dir, "Corrupt Book.cbz")
+            with open(corrupt_path, 'w') as f:
+                f.write("not a zip")
+
+            summary = process_books(source_dir, output_dir, archive_dir=archive_dir)
+
+            # Valid book should be archived, corrupt book should stay in source
+            self.assertFalse(os.path.exists(valid_path))
+            self.assertTrue(os.path.exists(os.path.join(archive_dir, "Valid Book.cbz")))
+            self.assertTrue(os.path.exists(corrupt_path))
+
+            self.assertEqual(summary["total_found"], 2)
+            self.assertEqual(summary["successfully_parsed"], 1)
+            self.assertEqual(summary["archived"], 1)
+            self.assertEqual(summary["failed"], 1)
 
 
 if __name__ == "__main__":
