@@ -689,9 +689,97 @@ class TestParser(unittest.TestCase):
                 toc_data, raw_str = load_toc_data(archive_path, z)
                 self.assertIsNone(toc_data)
 
+    def test_archive_reader_zip(self):
+        import tempfile
+        from parser import ArchiveReader
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            archive_path = os.path.join(tmp_dir, "test.zip")
+            with zipfile.ZipFile(archive_path, 'w') as z:
+                z.writestr("test.txt", "hello world")
+
+            self.assertTrue(ArchiveReader.is_archive(archive_path))
+            with ArchiveReader(archive_path) as reader:
+                self.assertEqual(reader.archive_type, "zip")
+                infolist = reader.infolist()
+                self.assertEqual(len(infolist), 1)
+                self.assertEqual(infolist[0].filename, "test.txt")
+                self.assertFalse(infolist[0].is_dir())
+                self.assertEqual(reader.read("test.txt"), b"hello world")
+
+    def test_process_books_rar_discovery_without_rarfile(self):
+        import tempfile
+        from parser import process_books
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_dir = os.path.join(tmp_dir, "source")
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(source_dir)
+            os.makedirs(output_dir)
+
+            # Create a dummy .rar file
+            rar_path = os.path.join(source_dir, "Book.rar")
+            with open(rar_path, "wb") as f:
+                f.write(b"Rar!\x1a\x07\x00not_a_real_rar")
+
+            summary = process_books(source_dir, output_dir, archive_dir="")
+            self.assertEqual(summary["total_found"], 1)
+            self.assertEqual(summary["successfully_parsed"], 0)
+            self.assertEqual(summary["failed"], 1)
+
+    def test_archive_reader_mocked_rarfile(self):
+        import tempfile
+        from unittest.mock import patch, MagicMock
+        import parser
+        from parser import process_single_book
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            rar_path = os.path.join(tmp_dir, "RarBook.rar")
+            with open(rar_path, "wb") as f:
+                f.write(b"Rar!\x1a\x07\x00dummy")
+
+            # Mock rarfile module behavior
+            mock_rarfile_mod = MagicMock()
+            mock_rarfile_mod.is_rarfile.return_value = True
+
+            mock_info_cover = MagicMock(filename="RarBook - c001 - p000 [Cover].jpg", file_size=10)
+            mock_info_cover.isdir.return_value = False
+            mock_info_cover.is_dir.return_value = False
+
+            mock_info_page = MagicMock(filename="RarBook - c001 - p001.jpg", file_size=10)
+            mock_info_page.isdir.return_value = False
+            mock_info_page.is_dir.return_value = False
+
+            mock_rf_instance = MagicMock()
+            mock_rf_instance.infolist.return_value = [mock_info_cover, mock_info_page]
+
+            # 1x1 RED image bytes
+            from PIL import Image
+            import io
+            img = Image.new('RGB', (1, 1), color='red')
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG')
+            img_bytes = buf.getvalue()
+
+            def mock_open(name):
+                return io.BytesIO(img_bytes)
+
+            mock_rf_instance.open.side_effect = mock_open
+            mock_rarfile_mod.RarFile.return_value = mock_rf_instance
+
+            with patch.object(parser, 'rarfile', mock_rarfile_mod), patch.object(parser, 'HAS_RARFILE', True):
+                output_dir = os.path.join(tmp_dir, "output")
+                success = process_single_book(rar_path, output_dir)
+                self.assertTrue(success)
+
+
+                book_dir = os.path.join(output_dir, "local", "RarBook")
+                self.assertTrue(os.path.exists(os.path.join(book_dir, "cover.jpg")))
+                self.assertTrue(os.path.exists(os.path.join(book_dir, "chapter_1", "image_1.jpg")))
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
 
 
 

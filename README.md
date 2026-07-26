@@ -1,9 +1,9 @@
-# CBR/CBZ/ZIP Book Parser
+# CBR/CBZ/ZIP/RAR Book Parser
 
-A Python command-line utility to extract, sort, and organize image pages from Comic Book archives (`.cbr`, `.cbz`, and `.zip` files) into a structured chapter hierarchy with a JPEG cover.
+A Python command-line utility to extract, sort, and organize image pages from Comic Book archives (`.cbr`, `.cbz`, `.zip`, and `.rar` files) into a structured chapter hierarchy with a JPEG cover.
 
 ## Objective
-For each `.cbr`, `.cbz`, or `.zip` book in the `source/` folder, the utility parses the archive, identifies chapter/page sequences, filters out non-image files, and extracts them into a dedicated folder matching the book filename. This establishes a 1-to-1 mapping so you can immediately see which books have been successfully extracted.
+For each `.cbr`, `.cbz`, `.zip`, or `.rar` book in the `source/` folder, the utility parses the archive, identifies chapter/page sequences, filters out non-image files, and extracts them into a dedicated folder matching the book filename. This establishes a 1-to-1 mapping so you can immediately see which books have been successfully extracted.
 
 ## Output Structure
 ```
@@ -25,8 +25,10 @@ output/local/
 2. **Install dependencies**:
    ```bash
    pip install Pillow
+   # Optional: for .rar archive support
+   pip install rarfile
    ```
-3. **Place your books**: Put your `.cbr`, `.cbz`, or `.zip` archives inside the `source/` folder.
+3. **Place your books**: Put your `.cbr`, `.cbz`, `.zip`, or `.rar` archives inside the `source/` folder.
 4. **Run the parser**:
    ```bash
    python parser.py --source ./source --output ./output --archive ./archive

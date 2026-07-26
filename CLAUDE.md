@@ -8,6 +8,8 @@ This file outlines the build, test, and style conventions for the CBR Book Parse
 Setup environment:
 ```bash
 pip install Pillow
+# Optional: for .rar archive support
+pip install rarfile
 ```
 
 ### Running the Parser
@@ -27,7 +29,7 @@ python -m unittest discover -s tests
 ## Code & Testing Conventions
 
 ### Project Constraints
-1. **Archive Type**: CBR, CBZ, and ZIP files in this project are zip archives (using `.cbr`, `.cbz`, or `.zip` extensions) containing image files. Use the built-in `zipfile` module. Do not require native `unrar` libraries. Non-image files (`.txt`, `.nfo`), hidden files (`.DS_Store`), and `__MACOSX` directories are ignored.
+1. **Archive Type**: Supports ZIP (`.zip`, `.cbz`) and RAR (`.rar`, `.cbr`) archives containing image files. Uses `ArchiveReader` to wrap built-in `zipfile` and optional `rarfile` modules. If a `.rar` archive is encountered without `rarfile` installed, a clear warning is logged and the file is skipped. Non-image files (`.txt`, `.nfo`), hidden files (`.DS_Store`), and `__MACOSX` directories are ignored.
 2. **Page Formats & Filenames**: Extract page files directly without transcoding, preserving their original format and extension (supporting `.webp`, `.jpg`, `.jpeg`, `.png`). Only convert the cover image page to JPEG format (`cover.jpg`). Supports both `p001` tagged pages and plain numerical filenames (e.g. `1.jpg`, `2.jpg`).
 3. **Chapter Folder Formatting**:
    - Chapter IDs are of the form `c\d+(?:x\d+)?` (e.g. `c001`, `c005x1`). Files without chapter tags default to `chapter_1`.

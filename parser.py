@@ -11,12 +11,80 @@ from dataclasses import dataclass
 from collections import defaultdict
 from PIL import Image
 
+try:
+    import rarfile
+    HAS_RARFILE = True
+except ImportError:
+    rarfile = None
+    HAS_RARFILE = False
+
 @dataclass
 class PageInfo:
     name: str
     chapter: str
     page: int
     is_cover: bool
+
+@dataclass
+class ArchiveEntry:
+    filename: str
+    file_size: int
+    _is_dir: bool
+
+    def is_dir(self) -> bool:
+        return self._is_dir
+
+class ArchiveReader:
+    """
+    Unified context manager wrapper for zipfile.ZipFile and rarfile.RarFile archives.
+    """
+    def __init__(self, archive_path: str):
+        self.archive_path = archive_path
+        self.archive_type = None
+        self.archive_obj = None
+
+    @classmethod
+    def is_archive(cls, path: str) -> bool:
+        if zipfile.is_zipfile(path):
+            return True
+        if HAS_RARFILE and rarfile and rarfile.is_rarfile(path):
+            return True
+        return False
+
+    def __enter__(self):
+        if zipfile.is_zipfile(self.archive_path):
+            self.archive_type = 'zip'
+            self.archive_obj = zipfile.ZipFile(self.archive_path, 'r')
+            return self
+        elif HAS_RARFILE and rarfile and rarfile.is_rarfile(self.archive_path):
+            self.archive_type = 'rar'
+            self.archive_obj = rarfile.RarFile(self.archive_path, 'r')
+            return self
+        elif self.archive_path.lower().endswith('.rar') and not HAS_RARFILE:
+            raise ImportError("Processing '.rar' archives requires the 'rarfile' Python package. Please install it with 'pip install rarfile'.")
+        else:
+            raise ValueError(f"'{os.path.basename(self.archive_path)}' is not a valid zip or rar archive.")
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.archive_obj:
+            self.archive_obj.close()
+
+    def infolist(self) -> List[ArchiveEntry]:
+        return [
+            ArchiveEntry(
+                info.filename,
+                info.file_size,
+                info.is_dir() if self.archive_type == 'zip' else (info.isdir() if hasattr(info, 'isdir') else info.is_dir())
+            )
+            for info in self.archive_obj.infolist()
+        ]
+
+    def read(self, name: str) -> bytes:
+        return self.archive_obj.read(name)
+
+
+    def open(self, name: str):
+        return self.archive_obj.open(name)
 
 # Pre-compiled regular expressions for parsing chapter IDs and page info
 CHAPTER_PATTERN_PREFER = re.compile(r' - (c\d+(?:x\d+)?)\b')
@@ -151,13 +219,13 @@ def format_chapter_folder_name(chapter_id: str) -> str:
         return f"chapter_{chapter_num}"
     return sanitize_folder_name(chapter_id)
 
-def load_toc_data(archive_path: str, z: zipfile.ZipFile) -> Tuple[Optional[Dict[str, Any]], str]:
+def load_toc_data(archive_path: str, z: ArchiveReader) -> Tuple[Optional[Dict[str, Any]], str]:
     """
-    Attempts to locate and parse 'toc.json' from inside the zip archive or alongside archive_path.
+    Attempts to locate and parse 'toc.json' from inside the archive or alongside archive_path.
     Enforces security size limits (MAX_FILE_SIZE) and filters out hidden/system paths.
     Returns a tuple of (parsed_json_dict_or_None, raw_json_str_or_empty).
     """
-    # 1. Search inside zip archive
+    # 1. Search inside archive
     for info in z.infolist():
         parts = info.filename.replace('\\', '/').split('/')
         is_system_path = any(p.startswith('.') or p.startswith('__MACOSX') for p in parts if p)
@@ -245,7 +313,7 @@ def group_pages_by_toc(pages: List[PageInfo], toc_data: Dict[str, Any]) -> Dict[
     return chapter_groups
 
 
-def _save_cover_image(z: zipfile.ZipFile, cover_page_name: str, book_dir: str) -> None:
+def _save_cover_image(z: ArchiveReader, cover_page_name: str, book_dir: str) -> None:
     """
     Extracts and converts the cover image to cover.jpg inside book_dir.
     Handles color mode conversions and transparency safely.
@@ -260,7 +328,7 @@ def _save_cover_image(z: zipfile.ZipFile, cover_page_name: str, book_dir: str) -
             rgb_img = img.convert('RGB')
         rgb_img.save(cover_path, "JPEG")
 
-def _extract_and_write_pages(z: zipfile.ZipFile, book_dir: str, chapter_groups: Dict[str, List[PageInfo]]) -> None:
+def _extract_and_write_pages(z: ArchiveReader, book_dir: str, chapter_groups: Dict[str, List[PageInfo]]) -> None:
     """
     Extracts chapter image files into output chapter directories using 1 MB stream buffers.
     """
@@ -282,20 +350,23 @@ def _extract_and_write_pages(z: zipfile.ZipFile, book_dir: str, chapter_groups: 
 
 def process_single_book(archive_path: str, output_dir: str) -> bool:
     """
-    Processes a single CBR/CBZ/ZIP book archive. Returns True if successfully parsed, False otherwise.
+    Processes a single CBR/CBZ/ZIP/RAR book archive. Returns True if successfully parsed, False otherwise.
     """
     file_name = os.path.basename(archive_path)
     book_folder_name = sanitize_folder_name(os.path.splitext(file_name)[0])
 
     try:
-        if not zipfile.is_zipfile(archive_path):
-            print(f"Warning: '{file_name}' is not a valid zip archive (CBR/CBZ/ZIP). Skipping.")
+        if not ArchiveReader.is_archive(archive_path):
+            if archive_path.lower().endswith('.rar') and not HAS_RARFILE:
+                print(f"Warning: '{file_name}' requires the 'rarfile' package. Please install it with 'pip install rarfile'. Skipping.")
+                return False
+            print(f"Warning: '{file_name}' is not a valid zip or rar archive (CBR/CBZ/ZIP/RAR). Skipping.")
             return False
 
         book_dir = _safe_join(output_dir, "local", book_folder_name)
 
         pages: List[PageInfo] = []
-        with zipfile.ZipFile(archive_path, 'r') as z:
+        with ArchiveReader(archive_path) as z:
             total_uncompressed_size = 0
             for info in z.infolist():
                 if info.file_size > MAX_FILE_SIZE:
@@ -360,12 +431,15 @@ def process_single_book(archive_path: str, output_dir: str) -> bool:
         print(f"Error: '{file_name}' is a corrupted zip archive: {e}. Skipping.")
         return False
     except Exception as e:
+        if HAS_RARFILE and rarfile and isinstance(e, rarfile.Error):
+            print(f"Error: '{file_name}' is a corrupted rar archive: {e}. Skipping.")
+            return False
         print(f"Error processing book '{file_name}': {e}. Skipping.")
         return False
 
 def process_books(source_dir: str, output_dir: str, archive_dir: str = "./archive") -> Dict[str, int]:
     """
-    Processes all CBR, CBZ, and ZIP books in source_dir, organizing them into output_dir.
+    Processes all CBR, CBZ, ZIP, and RAR books in source_dir, organizing them into output_dir.
     Moves successfully parsed files into archive_dir if specified.
     Returns a summary dictionary of execution metrics.
     """
@@ -380,9 +454,9 @@ def process_books(source_dir: str, output_dir: str, archive_dir: str = "./archiv
         print(f"Source directory '{source_dir}' does not exist.")
         return summary
 
-    book_files = sorted([f for f in os.listdir(source_dir) if f.lower().endswith(('.cbr', '.cbz', '.zip'))])
+    book_files = sorted([f for f in os.listdir(source_dir) if f.lower().endswith(('.cbr', '.cbz', '.zip', '.rar'))])
     if not book_files:
-        print(f"No .cbr, .cbz, or .zip files found in '{source_dir}'.")
+        print(f"No .cbr, .cbz, .zip, or .rar files found in '{source_dir}'.")
         return summary
 
     summary["total_found"] = len(book_files)
@@ -413,8 +487,8 @@ def process_books(source_dir: str, output_dir: str, archive_dir: str = "./archiv
     return summary
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Parse CBR/CBZ/ZIP books into organized chapters.")
-    parser.add_argument("--source", default="./source", help="Source directory containing .cbr, .cbz, or .zip files")
+    parser = argparse.ArgumentParser(description="Parse CBR/CBZ/ZIP/RAR books into organized chapters.")
+    parser.add_argument("--source", default="./source", help="Source directory containing .cbr, .cbz, .zip, or .rar files")
     parser.add_argument("--output", default="./output", help="Output directory to place parsed structure")
     parser.add_argument("--archive", default="./archive", help="Archive directory to move processed books (set empty string to disable)")
     args = parser.parse_args()
@@ -424,3 +498,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
