@@ -936,6 +936,18 @@ class TestParser(unittest.TestCase):
         details_str = transform_meta_to_details(str_meta, meta_engine="n20")
         self.assertEqual(details_str["title"], "Plain String Title")
 
+    def test_transform_meta_to_details_with_none_values(self):
+        none_meta = {
+            "title": "Title",
+            "artist": None,
+            "author": None,
+            "tags": []
+        }
+        details = transform_meta_to_details(none_meta, meta_engine="n20")
+        self.assertEqual(details["artist"], "")
+        self.assertEqual(details["author"], "")
+
+
     def test_process_books_with_meta(self):
         import tempfile
         import json
