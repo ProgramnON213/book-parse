@@ -58,8 +58,8 @@ output/local/
   - Failed or corrupted files remain in `--source`.
   - At the end of execution, a CLI summary prints total books found, successfully parsed, archived, and failed/skipped counts.
 - **Security & Performance**:
-  - **Path Traversal Protection**: Enforced atomic path bound checks (`_safe_join`) across all directory creation and file writing operations.
+  - **Path Traversal Protection**: Enforced atomic path bound checks (`_safe_join`) directly across all directory creation, archive moving, and file writing operations.
   - **Windows Reserved Names**: Automatically sanitizes Windows reserved filenames (`CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`) and strips trailing dots/spaces.
-  - **DoS Protection**: Checks `MAX_FILE_SIZE` (100 MB) when reading internal or external `toc.json` files.
-  - **Stream Buffering & LRU Caching**: Uses 1 MB stream buffers (`shutil.copyfileobj`) and `@lru_cache` for sort-key functions to maximize extraction speed.
+  - **DoS Protection & DRY JSON Loading**: Unified internal/external JSON resolution helper (`_find_and_load_json`) enforces `MAX_FILE_SIZE` (100 MB) when reading `toc.json` and `meta.json` files.
+  - **Stream Buffering & Focused Caching**: Uses 1 MB stream buffers (`shutil.copyfileobj`) for disk extraction and `@lru_cache` on high-frequency regex parsing routines.
 
