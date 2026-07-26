@@ -29,10 +29,7 @@ class PageInfo:
 class ArchiveEntry:
     filename: str
     file_size: int
-    _is_dir: bool
-
-    def is_dir(self) -> bool:
-        return self._is_dir
+    is_dir: bool
 
 class ArchiveReader:
     """
@@ -523,7 +520,7 @@ def process_single_book(archive_path: str, output_dir: str, meta_engine: str = "
                 total_uncompressed_size += info.file_size
                 
                 base_name = os.path.basename(info.filename)
-                if not info.is_dir() and not base_name.startswith('.') and not base_name.startswith('__MACOSX') and info.filename.lower().endswith(('.webp', '.jpg', '.jpeg', '.png')):
+                if not info.is_dir and not base_name.startswith('.') and not base_name.startswith('__MACOSX') and info.filename.lower().endswith(('.webp', '.jpg', '.jpeg', '.png')):
                     pages.append(PageInfo(
                         name=info.filename,
                         chapter=extract_chapter_id(base_name),

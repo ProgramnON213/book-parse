@@ -733,7 +733,7 @@ class TestParser(unittest.TestCase):
                 infolist = reader.infolist()
                 self.assertEqual(len(infolist), 1)
                 self.assertEqual(infolist[0].filename, "test.txt")
-                self.assertFalse(infolist[0].is_dir())
+                self.assertFalse(infolist[0].is_dir)
                 self.assertEqual(reader.read("test.txt"), b"hello world")
 
     def test_process_books_rar_discovery_without_rarfile(self):
@@ -854,8 +854,17 @@ class TestParser(unittest.TestCase):
                 infolist = reader.infolist()
                 self.assertEqual(len(infolist), 1)
                 self.assertEqual(infolist[0].filename, "page1.jpg")
-                self.assertFalse(infolist[0].is_dir())
+                self.assertFalse(infolist[0].is_dir)
                 self.assertEqual(reader.read("page1.jpg"), b"fake_image_data")
+
+    def test_archive_entry_is_dir_attribute(self):
+        from parser import ArchiveEntry
+        entry = ArchiveEntry("test.txt", 100, is_dir=False)
+        self.assertEqual(entry.filename, "test.txt")
+        self.assertEqual(entry.file_size, 100)
+        self.assertFalse(entry.is_dir)
+        dir_entry = ArchiveEntry("subfolder", 0, is_dir=True)
+        self.assertTrue(dir_entry.is_dir)
 
     def test_process_books_directory(self):
         import tempfile
