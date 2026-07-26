@@ -74,6 +74,11 @@ class ArchiveReader:
         if self.archive_obj:
             self.archive_obj.close()
 
+    def _info_is_dir(self, info) -> bool:
+        if self.archive_type == 'zip':
+            return info.is_dir()
+        return info.isdir() if hasattr(info, 'isdir') else info.is_dir()
+
     def infolist(self) -> List[ArchiveEntry]:
         if self.archive_type == 'dir':
             entries = []
@@ -88,11 +93,7 @@ class ArchiveReader:
                     entries.append(ArchiveEntry(rel_p, 0, True))
             return entries
         return [
-            ArchiveEntry(
-                info.filename,
-                info.file_size,
-                info.is_dir() if self.archive_type == 'zip' else (info.isdir() if hasattr(info, 'isdir') else info.is_dir())
-            )
+            ArchiveEntry(info.filename, info.file_size, self._info_is_dir(info))
             for info in self.archive_obj.infolist()
         ]
 
@@ -148,10 +149,12 @@ def _safe_join(base_dir: str, *paths: str) -> str:
     abs_base = os.path.realpath(base_dir)
     abs_target = os.path.realpath(target)
     try:
-        if os.path.commonpath([abs_base, abs_target]) != abs_base:
-            raise ValueError(f"Target path '{target}' escapes base directory '{base_dir}'.")
+        is_inside = (os.path.commonpath([abs_base, abs_target]) == abs_base)
     except ValueError as e:
-        raise ValueError(f"Target path '{target}' escapes base directory '{base_dir}': {e}")
+        raise ValueError(f"Target path '{target}' escapes base directory '{base_dir}': {e}") from e
+
+    if not is_inside:
+        raise ValueError(f"Target path '{target}' escapes base directory '{base_dir}'.")
     return target
 
 # Security constraints to prevent Denial of Service (DoS) / Zip Bomb attacks
@@ -243,108 +246,86 @@ def format_chapter_folder_name(chapter_id: str) -> str:
         return f"chapter_{chapter_num}"
     return sanitize_folder_name(chapter_id)
 
-def load_toc_data(archive_path: str, z: ArchiveReader) -> Tuple[Optional[Dict[str, Any]], str]:
+def _find_and_load_json(
+    target_name: str,
+    archive_path: str,
+    z: ArchiveReader,
+    validator_fn=None
+) -> Tuple[Optional[Dict[str, Any]], str]:
     """
-    Attempts to locate and parse 'toc.json' from inside the archive or alongside archive_path.
-    Enforces security size limits (MAX_FILE_SIZE) and filters out hidden/system paths.
-    Returns a tuple of (parsed_json_dict_or_None, raw_json_str_or_empty).
+    Generic helper to locate and parse a JSON file (e.g. 'toc.json', 'meta.json')
+    from inside an archive or alongside archive_path. Enforces MAX_FILE_SIZE limits.
     """
+    target_lower = target_name.lower()
+
     # 1. Search inside archive
     for info in z.infolist():
         parts = info.filename.replace('\\', '/').split('/')
         is_system_path = any(p.startswith('.') or p.startswith('__MACOSX') for p in parts if p)
         base = os.path.basename(info.filename)
-        if base.lower() == "toc.json" and not is_system_path:
+        if base.lower() == target_lower and not is_system_path:
             if info.file_size > MAX_FILE_SIZE:
-                print(f"Warning: 'toc.json' inside archive exceeds size limit ({info.file_size} B). Skipping.")
+                print(f"Warning: '{target_name}' inside archive exceeds size limit ({info.file_size} B). Skipping.")
                 return None, ""
             try:
                 raw_bytes = z.read(info.filename)
                 raw_str = raw_bytes.decode('utf-8-sig', errors='replace')
                 data = json.loads(raw_str)
-                if isinstance(data, dict) and "chapters" in data and isinstance(data["chapters"], list):
+                if isinstance(data, dict) and (validator_fn is None or validator_fn(data)):
                     return data, raw_str
             except Exception as e:
                 if HAS_RARFILE and rarfile and hasattr(rarfile, 'RarCannotExec') and isinstance(e, rarfile.RarCannotExec):
                     raise e
-                print(f"Warning: Found 'toc.json' inside archive but failed to parse: {e}")
+                print(f"Warning: Found '{target_name}' inside archive but failed to parse: {e}")
                 return None, ""
-
 
     # 2. Search alongside archive file in source directory
     stem = os.path.splitext(archive_path)[0]
     dir_name = os.path.dirname(archive_path)
     candidates = [
-        f"{stem}.toc.json",
-        os.path.join(dir_name, "toc.json"),
+        f"{stem}.{target_name}",
+        os.path.join(dir_name, target_name),
     ]
     for cand in candidates:
         if os.path.isfile(cand):
             file_size = os.path.getsize(cand)
             if file_size > MAX_FILE_SIZE:
-                print(f"Warning: External TOC file '{cand}' exceeds size limit ({file_size} B). Skipping.")
+                print(f"Warning: External file '{cand}' exceeds size limit ({file_size} B). Skipping.")
                 continue
             try:
                 with open(cand, 'r', encoding='utf-8-sig') as f:
                     raw_str = f.read()
                     data = json.loads(raw_str)
-                    if isinstance(data, dict) and "chapters" in data and isinstance(data["chapters"], list):
+                    if isinstance(data, dict) and (validator_fn is None or validator_fn(data)):
                         return data, raw_str
             except Exception as e:
-                print(f"Warning: Found external TOC file '{cand}' but failed to parse: {e}")
+                print(f"Warning: Found external file '{cand}' but failed to parse: {e}")
 
     return None, ""
+
+def load_toc_data(archive_path: str, z: ArchiveReader) -> Tuple[Optional[Dict[str, Any]], str]:
+    """
+    Attempts to locate and parse 'toc.json' from inside the archive or alongside archive_path.
+    Enforces security size limits (MAX_FILE_SIZE) and filters out hidden/system paths.
+    """
+    return _find_and_load_json(
+        "toc.json",
+        archive_path,
+        z,
+        validator_fn=lambda d: "chapters" in d and isinstance(d["chapters"], list)
+    )
 
 def load_meta_data(archive_path: str, z: ArchiveReader) -> Tuple[Optional[Dict[str, Any]], str]:
     """
     Attempts to locate and parse 'meta.json' from inside the archive or alongside archive_path.
     Enforces security size limits (MAX_FILE_SIZE) and filters out hidden/system paths.
-    Returns a tuple of (parsed_json_dict_or_None, raw_json_str_or_empty).
     """
-    # 1. Search inside archive
-    for info in z.infolist():
-        parts = info.filename.replace('\\', '/').split('/')
-        is_system_path = any(p.startswith('.') or p.startswith('__MACOSX') for p in parts if p)
-        base = os.path.basename(info.filename)
-        if base.lower() == "meta.json" and not is_system_path:
-            if info.file_size > MAX_FILE_SIZE:
-                print(f"Warning: 'meta.json' inside archive exceeds size limit ({info.file_size} B). Skipping.")
-                return None, ""
-            try:
-                raw_bytes = z.read(info.filename)
-                raw_str = raw_bytes.decode('utf-8-sig', errors='replace')
-                data = json.loads(raw_str)
-                if isinstance(data, dict):
-                    return data, raw_str
-            except Exception as e:
-                if HAS_RARFILE and rarfile and hasattr(rarfile, 'RarCannotExec') and isinstance(e, rarfile.RarCannotExec):
-                    raise e
-                print(f"Warning: Found 'meta.json' inside archive but failed to parse: {e}")
-                return None, ""
-
-    # 2. Search alongside archive file in source directory
-    stem = os.path.splitext(archive_path)[0]
-    dir_name = os.path.dirname(archive_path)
-    candidates = [
-        f"{stem}.meta.json",
-        os.path.join(dir_name, "meta.json"),
-    ]
-    for cand in candidates:
-        if os.path.isfile(cand):
-            file_size = os.path.getsize(cand)
-            if file_size > MAX_FILE_SIZE:
-                print(f"Warning: External meta file '{cand}' exceeds size limit ({file_size} B). Skipping.")
-                continue
-            try:
-                with open(cand, 'r', encoding='utf-8-sig') as f:
-                    raw_str = f.read()
-                    data = json.loads(raw_str)
-                    if isinstance(data, dict):
-                        return data, raw_str
-            except Exception as e:
-                print(f"Warning: Found external meta file '{cand}' but failed to parse: {e}")
-
-    return None, ""
+    return _find_and_load_json(
+        "meta.json",
+        archive_path,
+        z,
+        validator_fn=lambda d: True
+    )
 
 STATUS_VALUES_DEFAULT = [
     "0 = Unknown",
@@ -397,8 +378,8 @@ def transform_meta_to_details(meta_data: Dict[str, Any], meta_engine: str = "n20
         elif isinstance(tag, str):
             genre_names.append(tag)
 
-    artist_str = ", ".join(artist_names) if artist_names else str(meta_data.get("artist", ""))
-    author_str = ", ".join(author_names) if author_names else str(meta_data.get("author", ""))
+    artist_str = ", ".join(artist_names) if artist_names else str(meta_data.get("artist") or "")
+    author_str = ", ".join(author_names) if author_names else str(meta_data.get("author") or "")
 
     return {
         "title": title_str,
