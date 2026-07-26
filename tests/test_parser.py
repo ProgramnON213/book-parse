@@ -7,7 +7,7 @@ from parser import (
     natural_chapter_sort_key,
     is_cover_image,
     sanitize_folder_name,
-    check_safe_path,
+    _safe_join,
     archive_source_file,
     load_toc_data,
     group_pages_by_toc,
@@ -116,13 +116,6 @@ class TestParser(unittest.TestCase):
     def test_sanitize_folder_name(self):
         self.assertEqual(sanitize_folder_name("My: Cool? Book*"), "My_ Cool_ Book_")
         self.assertEqual(sanitize_folder_name("clean_name-123"), "clean_name-123")
-
-    def test_check_safe_path(self):
-        base = os.path.abspath("base_dir")
-        safe = os.path.join(base, "sub", "file.txt")
-        unsafe = os.path.join(base, "..", "outside.txt")
-        self.assertTrue(check_safe_path(base, safe))
-        self.assertFalse(check_safe_path(base, unsafe))
 
     def test_process_books_invalid_zip(self):
         import tempfile
@@ -314,15 +307,6 @@ class TestParser(unittest.TestCase):
             self.assertTrue(os.path.exists(cover_path))
             with Image.open(cover_path) as cover_img:
                 self.assertEqual(cover_img.format, "JPEG")
-
-    def test_check_safe_path_exception(self):
-        from unittest.mock import patch
-        with patch('os.path.commonpath') as mock_commonpath:
-            # Force os.path.commonpath to raise ValueError
-            mock_commonpath.side_effect = ValueError("Paths don't have the same drive")
-            # Should handle exception and return False, not crash
-            result = check_safe_path("C:\\base", "D:\\target")
-            self.assertFalse(result)
 
     def test_process_books_zip_plain_filenames(self):
         import tempfile

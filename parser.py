@@ -158,17 +158,6 @@ def _safe_join(base_dir: str, *paths: str) -> str:
 MAX_FILE_SIZE = 100 * 1024 * 1024  # Max size for individual extracted files (100 MB)
 MAX_BOOK_UNCOMPRESSED_SIZE = 1024 * 1024 * 1024  # Max total uncompressed size for a book archive (1 GB)
 
-def check_safe_path(base_dir: str, target_path: str) -> bool:
-    """
-    Verifies that target_path is strictly inside base_dir to prevent directory traversal.
-    Delegates to _safe_join to eliminate duplicate path resolution logic.
-    """
-    try:
-        _safe_join(base_dir, target_path)
-        return True
-    except ValueError:
-        return False
-
 def archive_source_file(source_file_path: str, archive_dir: str, base_dir: str = None) -> str:
     """
     Moves a processed source file into the archive directory.
@@ -176,8 +165,8 @@ def archive_source_file(source_file_path: str, archive_dir: str, base_dir: str =
     Optionally checks path safety against base_dir if base_dir is provided.
     Returns the destination file path.
     """
-    if base_dir and not check_safe_path(base_dir, archive_dir):
-        raise ValueError(f"Archive directory '{archive_dir}' is outside base directory '{base_dir}'.")
+    if base_dir:
+        _safe_join(base_dir, archive_dir)
     
     os.makedirs(archive_dir, exist_ok=True)
     filename = os.path.basename(source_file_path)
