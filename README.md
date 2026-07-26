@@ -10,6 +10,7 @@ For each archive file or uncompressed book directory in the `source/` folder, th
 output/local/
 └── [Book filename or folder name]/
     ├── cover.jpg
+    ├── details.json         (if meta.json available)
     ├── toc.json             (if available)
     ├── chapter_1/
     │   ├── image_1.png
@@ -31,19 +32,20 @@ output/local/
 3. **Place your books**: Put your `.cbr`, `.cbz`, `.zip`, or `.rar` archives (or uncompressed book folders) inside the `source/` folder.
 4. **Run the parser**:
    ```bash
-   python parser.py --source ./source --output ./output --archive ./archive
+   python parser.py --source ./source --output ./output --archive ./archive --meta n20
    ```
 
 ## Development Commands
 
 | Command | Description |
 |---------|-------------|
-| `python parser.py --source <dir> --output <dir> [--archive <dir>]` | Runs the parser (archives parsed files by default) |
+| `python parser.py --source <dir> --output <dir> [--archive <dir>] [--meta n20]` | Runs the parser (archives parsed files by default) |
 | `python -m unittest discover -s tests` | Runs the full automated test suite |
 
 ## Naming Conventions & Logic
 - **Output Folder**: Named exactly after the book file (excluding the extension).
 - **Cover Image**: Extracted from the page flagged `[Cover]` or `p000` inside the archive, converted to RGB JPEG (safe transparency handling included), and saved as `cover.jpg`. If no cover marker exists, the first naturally sorted image page is automatically selected as `cover.jpg`.
+- **Metadata Extraction (`details.json`)**: If `meta.json` is present inside the archive or alongside in `--source` (`[book_stem].meta.json`), its data is transformed using the metadata schema engine specified by `--meta` (default `"n20"`). A formatted `details.json` file is written to `output/local/[BookName]/details.json` alongside `cover.jpg`. If no `meta.json` is present, parsing continues normally without generating `details.json`.
 - **Table of Contents (`toc.json`)**: If `toc.json` is present inside the archive or alongside in `--source` (`[book_stem].toc.json`), its chapter page ranges (`start_page` to `end_page`) are used to group pages into chapters, and `toc.json` is saved to `output/local/[BookName]/toc.json`. Non-`cXXXX` chapter entries (e.g. `finale`, `appendix`) continue the sequential chapter numbering (`chapter_7`, `chapter_8`). Outlier pages before Chapter 1 route to `chapter_0`, while gap and trailing pages outside `toc.json` ranges strictly route to extra folders (e.g. `chapter_10_extra_1`). If `toc.json` is missing or invalid, the parser falls back to regex chapter extraction.
 - **Chapter Folders**:
   - Standard chapters (e.g., `c001`) -> `chapter_1`

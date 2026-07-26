@@ -295,6 +295,121 @@ def load_toc_data(archive_path: str, z: ArchiveReader) -> Tuple[Optional[Dict[st
 
     return None, ""
 
+def load_meta_data(archive_path: str, z: ArchiveReader) -> Tuple[Optional[Dict[str, Any]], str]:
+    """
+    Attempts to locate and parse 'meta.json' from inside the archive or alongside archive_path.
+    Enforces security size limits (MAX_FILE_SIZE) and filters out hidden/system paths.
+    Returns a tuple of (parsed_json_dict_or_None, raw_json_str_or_empty).
+    """
+    # 1. Search inside archive
+    for info in z.infolist():
+        parts = info.filename.replace('\\', '/').split('/')
+        is_system_path = any(p.startswith('.') or p.startswith('__MACOSX') for p in parts if p)
+        base = os.path.basename(info.filename)
+        if base.lower() == "meta.json" and not is_system_path:
+            if info.file_size > MAX_FILE_SIZE:
+                print(f"Warning: 'meta.json' inside archive exceeds size limit ({info.file_size} B). Skipping.")
+                return None, ""
+            try:
+                raw_bytes = z.read(info.filename)
+                raw_str = raw_bytes.decode('utf-8-sig', errors='replace')
+                data = json.loads(raw_str)
+                if isinstance(data, dict):
+                    return data, raw_str
+            except Exception as e:
+                if HAS_RARFILE and rarfile and hasattr(rarfile, 'RarCannotExec') and isinstance(e, rarfile.RarCannotExec):
+                    raise e
+                print(f"Warning: Found 'meta.json' inside archive but failed to parse: {e}")
+                return None, ""
+
+    # 2. Search alongside archive file in source directory
+    stem = os.path.splitext(archive_path)[0]
+    dir_name = os.path.dirname(archive_path)
+    candidates = [
+        f"{stem}.meta.json",
+        os.path.join(dir_name, "meta.json"),
+    ]
+    for cand in candidates:
+        if os.path.isfile(cand):
+            file_size = os.path.getsize(cand)
+            if file_size > MAX_FILE_SIZE:
+                print(f"Warning: External meta file '{cand}' exceeds size limit ({file_size} B). Skipping.")
+                continue
+            try:
+                with open(cand, 'r', encoding='utf-8-sig') as f:
+                    raw_str = f.read()
+                    data = json.loads(raw_str)
+                    if isinstance(data, dict):
+                        return data, raw_str
+            except Exception as e:
+                print(f"Warning: Found external meta file '{cand}' but failed to parse: {e}")
+
+    return None, ""
+
+STATUS_VALUES_DEFAULT = [
+    "0 = Unknown",
+    "1 = Ongoing",
+    "2 = Completed",
+    "3 = Licensed",
+    "4 = Publishing finished",
+    "5 = Cancelled",
+    "6 = On hiatus"
+]
+
+def transform_meta_to_details(meta_data: Dict[str, Any], meta_engine: str = "n20") -> Dict[str, Any]:
+    """
+    Transforms raw meta.json data dictionary into details.json dictionary.
+    Supports engine mode (default 'n20').
+    """
+    raw_title = meta_data.get("title")
+    title_str = ""
+    if isinstance(raw_title, dict):
+        if "english" in raw_title and raw_title["english"]:
+            title_str = str(raw_title["english"])
+        else:
+            for v in raw_title.values():
+                if v:
+                    title_str = str(v)
+                    break
+    elif isinstance(raw_title, str):
+        title_str = raw_title
+    elif raw_title is not None:
+        title_str = str(raw_title)
+
+    tags_list = meta_data.get("tags") if isinstance(meta_data.get("tags"), list) else []
+
+    artist_names = []
+    author_names = []
+    genre_names = []
+
+    for tag in tags_list:
+        if isinstance(tag, dict):
+            tag_type = tag.get("type", "")
+            tag_name = tag.get("name", "")
+            if not tag_name:
+                continue
+            if tag_type == "artist":
+                artist_names.append(tag_name)
+            elif tag_type in ("group", "author"):
+                author_names.append(tag_name)
+            elif tag_type == "tag":
+                genre_names.append(tag_name)
+        elif isinstance(tag, str):
+            genre_names.append(tag)
+
+    artist_str = ", ".join(artist_names) if artist_names else str(meta_data.get("artist", ""))
+    author_str = ", ".join(author_names) if author_names else str(meta_data.get("author", ""))
+
+    return {
+        "title": title_str,
+        "author": author_str,
+        "artist": artist_str,
+        "description": "none",
+        "genre": genre_names,
+        "status": "2",
+        "_status values": STATUS_VALUES_DEFAULT
+    }
+
 def group_pages_by_toc(pages: List[PageInfo], toc_data: Dict[str, Any]) -> Dict[str, List[PageInfo]]:
     """
     Groups page information by Table of Contents chapter definitions using start_page and end_page ranges.
@@ -401,7 +516,7 @@ def _extract_and_write_pages(z: ArchiveReader, book_dir: str, chapter_groups: Di
             with z.open(p.name) as source, open(dest_path, 'wb') as target:
                 shutil.copyfileobj(source, target, length=BUFFER_SIZE)
 
-def process_single_book(archive_path: str, output_dir: str) -> bool:
+def process_single_book(archive_path: str, output_dir: str, meta_engine: str = "n20") -> bool:
     """
     Processes a single CBR/CBZ/ZIP/RAR book archive. Returns True if successfully parsed, False otherwise.
     """
@@ -476,7 +591,19 @@ def process_single_book(archive_path: str, output_dir: str) -> bool:
                 except Exception as e:
                     print(f"Warning: Failed to write output toc.json: {e}")
 
-            # 3. Extract & write chapter image files
+            # 3. Check for Metadata (meta.json) and generate details.json
+            meta_data, raw_meta_str = load_meta_data(archive_path, z)
+            if meta_data:
+                try:
+                    details_dict = transform_meta_to_details(meta_data, meta_engine)
+                    details_out_path = _safe_join(book_dir, "details.json")
+                    with open(details_out_path, "w", encoding="utf-8") as f:
+                        json.dump(details_dict, f, ensure_ascii=False, indent=2)
+                    print(f"Generated details.json from meta.json (engine: {meta_engine})")
+                except Exception as e:
+                    print(f"Warning: Failed to write output details.json: {e}")
+
+            # 4. Extract & write chapter image files
             _extract_and_write_pages(z, book_dir, chapter_groups)
 
         return True
@@ -495,7 +622,7 @@ def process_single_book(archive_path: str, output_dir: str) -> bool:
         return False
 
 
-def process_books(source_dir: str, output_dir: str, archive_dir: str = "./archive") -> Dict[str, int]:
+def process_books(source_dir: str, output_dir: str, archive_dir: str = "./archive", meta_engine: str = "n20") -> Dict[str, int]:
     """
     Processes all CBR, CBZ, ZIP, and RAR books and uncompressed book directories in source_dir, organizing them into output_dir.
     Moves successfully parsed files/directories into archive_dir if specified.
@@ -530,7 +657,7 @@ def process_books(source_dir: str, output_dir: str, archive_dir: str = "./archiv
     for file_name in book_items:
         archive_path = os.path.join(source_dir, file_name)
         print(f"\nProcessing book: '{file_name}'")
-        success = process_single_book(archive_path, output_dir)
+        success = process_single_book(archive_path, output_dir, meta_engine=meta_engine)
         if success:
             summary["successfully_parsed"] += 1
             if archive_dir:
@@ -557,9 +684,10 @@ def main() -> None:
     parser.add_argument("--source", default="./source", help="Source directory containing .cbr, .cbz, .zip, or .rar files")
     parser.add_argument("--output", default="./output", help="Output directory to place parsed structure")
     parser.add_argument("--archive", default="./archive", help="Archive directory to move processed books (set empty string to disable)")
+    parser.add_argument("--meta", default="n20", help="Metadata engine format (default: n20)")
     args = parser.parse_args()
 
-    process_books(args.source, args.output, archive_dir=args.archive)
+    process_books(args.source, args.output, archive_dir=args.archive, meta_engine=args.meta)
 
 
 if __name__ == "__main__":

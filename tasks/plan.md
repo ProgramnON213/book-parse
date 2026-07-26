@@ -1,28 +1,24 @@
-# Implementation Plan: Non-cXXXX Chapter Auto-Numbering & Strict Non-TOC Extra Slicing
+# Implementation Plan: Metadata Extraction (meta.json to details.json)
 
 ## Overview
-Update `group_pages_by_toc` in `parser.py` to:
-1. Sequentially resolve non-`cXXXX` chapter IDs in `toc.json` (such as `finale`, `appendix`, `afterword`, `ch1`, or missing IDs) into continuous numeric chapter IDs (`c007` -> `chapter_7`, `c008` -> `chapter_8`), continuing from the highest numeric chapter ID.
-2. Strictly isolate images not covered by explicit `[start_page, end_page]` ranges in `toc.json` into extra folders (`chapter_0` for leading pages, `chapter_N_extra_1` for gap and trailing pages).
+Add capability to `parser.py` to extract `meta.json` (found inside book archives or alongside in `--source`) and write formatted `details.json` into the book output folder alongside `cover.jpg`. Provide a new CLI argument `--meta` (default `"n20"`). If no `meta.json` is found, parsing proceeds normally without generating `details.json`.
 
 ## Architecture Decisions
-- **Monotonic Chapter ID Resolution**:
-  - Maintain a running `current_chap_num` counter.
-  - Preserved IDs: `c001` .. `c006` update `current_chap_num = 6`.
-  - Non-`cXXXX` IDs: `current_chap_num += 1`, assigning `f"c{current_chap_num:03d}"` (`c007`, `c008`, etc.).
-- **Strict Range Isolation**:
-  - Pages inside `[start_page, end_page]` belong to `chapter_[N]`.
-  - Leading pages (`i < first_start`): `c000` -> `chapter_0`.
-  - Intermediate gap pages & trailing pages: `c{N}x1` -> `chapter_N_extra_1`.
+- **Discovery Strategy**: Follow `toc.json` pattern in `parser.py` — search inside archive first, then alongside archive in source directory (`[stem].meta.json` and `meta.json`).
+- **Engine Extensibility**: Engine flag `meta_engine` defaults to `"n20"`. `transform_meta_to_details` handles `n20` schema mapping.
+- **Safety**: Apply `MAX_FILE_SIZE` bounds checking and `_safe_join` for file path resolution.
 
 ## Task List
 
-### Phase 1: Implementation
-- [ ] Task 1: Update `group_pages_by_toc` in `parser.py` to auto-number non-`cXXXX` chapter entries and strictly isolate non-TOC pages into extra folders.
+### Phase 1: Core Implementation
+- [ ] Task 1: Add `load_meta_data` and `transform_meta_to_details` helper functions in `parser.py`.
+- [ ] Task 2: Integrate `meta.json` loading and `details.json` output writing into `process_single_book`, `process_books`, and CLI argument `--meta`.
 
-### Phase 2: Unit Testing & Verification
-- [ ] Task 2: Add unit test `test_group_pages_by_toc_named_sections` in `tests/test_parser.py` covering named sections (`finale`, `appendix`) after `c006`, verifying `chapter_7`, `chapter_8` generation.
-- [ ] Task 3: Execute test suite (`python -m unittest discover -s tests`) and confirm 100% pass rate.
+### Phase 2: Testing & Verification
+- [ ] Task 3: Add unit tests in `tests/test_parser.py` covering `meta.json` discovery, transformation, `details.json` output, missing `meta.json` fallback, and CLI args.
 
-### Checkpoint: Complete
-- [ ] All unit tests pass cleanly.
+## Risks and Mitigations
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Malformed `meta.json` | Low | Catch JSON decode errors, log warning, skip `details.json` without failing book processing. |
+| Missing fields in `meta.json` | Low | Use fallback logic (`title`, `author`, `artist` default to `""`, `genre` to `[]`). |

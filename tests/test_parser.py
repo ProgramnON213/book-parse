@@ -11,6 +11,8 @@ from parser import (
     archive_source_file,
     load_toc_data,
     group_pages_by_toc,
+    load_meta_data,
+    transform_meta_to_details,
 )
 
 class TestParser(unittest.TestCase):
@@ -891,9 +893,111 @@ class TestParser(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(parsed_book_dir, "chapter_1", "image_1.jpg")))
             self.assertTrue(os.path.exists(os.path.join(archive_dir, "My Uncompressed Book")))
 
+    def test_transform_meta_to_details(self):
+        sample_meta = {
+            "id": 622949,
+            "title": {
+                "english": "[Takeda Hiromitsu] Sister Breeder [Complete] [English]",
+                "japanese": "[武田弘光] シスターブリーダー + とらのあな限定特典"
+            },
+            "upload_date": 1768285500,
+            "num_pages": 238,
+            "num_favorites": 18083,
+            "scanlator": "",
+            "tags": [
+                {"id": 33172, "type": "category", "name": "doujinshi"},
+                {"id": 17249, "type": "language", "name": "translated"},
+                {"id": 12227, "type": "language", "name": "english"},
+                {"id": 8010, "type": "tag", "name": "group"},
+                {"id": 28031, "type": "tag", "name": "sister"},
+                {"id": 3235, "type": "artist", "name": "takeda hiromitsu"},
+                {"id": 9999, "type": "group", "name": "circle x"}
+            ]
+        }
+        details = transform_meta_to_details(sample_meta, meta_engine="n20")
+        self.assertEqual(details["title"], "[Takeda Hiromitsu] Sister Breeder [Complete] [English]")
+        self.assertEqual(details["artist"], "takeda hiromitsu")
+        self.assertEqual(details["author"], "circle x")
+        self.assertEqual(details["description"], "none")
+        self.assertEqual(details["genre"], ["group", "sister"])
+        self.assertEqual(details["status"], "2")
+        self.assertEqual(len(details["_status values"]), 7)
+
+        # Test title fallback to Japanese / non-english if english missing
+        fallback_meta = {
+            "title": {"japanese": "Japanese Only Title"},
+            "tags": []
+        }
+        details_fb = transform_meta_to_details(fallback_meta, meta_engine="n20")
+        self.assertEqual(details_fb["title"], "Japanese Only Title")
+
+        # Test string title
+        str_meta = {"title": "Plain String Title"}
+        details_str = transform_meta_to_details(str_meta, meta_engine="n20")
+        self.assertEqual(details_str["title"], "Plain String Title")
+
+    def test_process_books_with_meta(self):
+        import tempfile
+        import json
+        from PIL import Image
+        import io
+        from parser import process_books
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_dir = os.path.join(tmp_dir, "source")
+            output_dir = os.path.join(tmp_dir, "output")
+            archive_dir = os.path.join(tmp_dir, "archive")
+            os.makedirs(source_dir)
+            os.makedirs(output_dir)
+
+            # Generate dummy image
+            img = Image.new('RGB', (1, 1), color='green')
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG')
+            img_bytes = buf.getvalue()
+
+            sample_meta = {
+                "title": {"english": "Meta Test Book"},
+                "tags": [
+                    {"type": "artist", "name": "Test Artist"},
+                    {"type": "tag", "name": "Action"}
+                ]
+            }
+            meta_bytes = json.dumps(sample_meta).encode('utf-8')
+
+            # Book 1 with internal meta.json
+            cbr_path = os.path.join(source_dir, "Meta Book 1.cbz")
+            with zipfile.ZipFile(cbr_path, 'w') as z:
+                z.writestr("Meta Book - c001 - p000 [Cover].jpg", img_bytes)
+                z.writestr("meta.json", meta_bytes)
+
+            # Book 2 without meta.json
+            cbr_path_2 = os.path.join(source_dir, "No Meta Book.cbz")
+            with zipfile.ZipFile(cbr_path_2, 'w') as z:
+                z.writestr("No Meta - c001 - p000 [Cover].jpg", img_bytes)
+
+            summary = process_books(source_dir, output_dir, archive_dir=archive_dir, meta_engine="n20")
+            self.assertEqual(summary["successfully_parsed"], 2)
+
+            # Check details.json for Book 1
+            book1_dir = os.path.join(output_dir, "local", "Meta Book 1")
+            details1_path = os.path.join(book1_dir, "details.json")
+            self.assertTrue(os.path.exists(details1_path))
+            with open(details1_path, "r", encoding="utf-8") as f:
+                d1 = json.load(f)
+                self.assertEqual(d1["title"], "Meta Test Book")
+                self.assertEqual(d1["artist"], "Test Artist")
+                self.assertEqual(d1["genre"], ["Action"])
+
+            # Check no details.json for Book 2
+            book2_dir = os.path.join(output_dir, "local", "No Meta Book")
+            details2_path = os.path.join(book2_dir, "details.json")
+            self.assertFalse(os.path.exists(details2_path))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

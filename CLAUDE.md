@@ -15,7 +15,7 @@ pip install rarfile
 ### Running the Parser
 Run the parsing script:
 ```bash
-python parser.py --source ./source --output ./output --archive ./archive
+python parser.py --source ./source --output ./output --archive ./archive --meta n20
 ```
 
 ### Running Tests
@@ -38,7 +38,8 @@ python -m unittest discover -s tests
 4. **Natural Sorting & Covers**: Sort chapters using natural tuple sorting `(chapter_num, extra_num)`. Pages are sorted numerically by page index/filename stem. If no explicit `[Cover]` or `p000` tag exists, automatically use the first naturally sorted image as `cover.jpg`.
 5. **Source Archiving & Collisions**: Successfully parsed archive files in `--source` are automatically moved to `--archive` (default `./archive`). If a file with the same name already exists in the archive folder, a `_YYYYMMDD_HHMMSS` timestamp suffix is appended to prevent data loss. Corrupted or unparseable files remain in `--source`.
 6. **Table of Contents Support**: If `toc.json` is present inside the archive or alongside in `--source` (`[stem].toc.json`), chapter page ranges (`start_page` to `end_page`) determine chapter slicing, and `toc.json` is saved to `output/local/[BookName]/toc.json`. Non-`cXXXX` chapter entries (e.g. `finale`, `appendix`) continue chapter numbers sequentially (`chapter_7`, `chapter_8`). Outlier pages before Chapter 1 route to `chapter_0`, while gap and trailing pages outside `toc.json` ranges strictly route to extra folders (`chapter_N_extra_1`). Defaults to regex parsing if `toc.json` is missing or invalid.
-7. **Security & Path Safety**: Use `_safe_join` for all destination path resolution to strictly prevent directory traversal. Folder names are sanitized against Windows reserved names (`CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`) and trailing dots/spaces. Reading `toc.json` (internal and external) is subject to `MAX_FILE_SIZE` bounds checking. Sort keys and chapter formatting are cached with `@lru_cache`.
+7. **Metadata Extraction & Details**: If `meta.json` is present inside the archive or alongside in `--source` (`[stem].meta.json`), its metadata is extracted using the schema engine specified by `--meta` (default `"n20"`). A formatted `details.json` file is written to `output/local/[BookName]/details.json` alongside `cover.jpg`. If no `meta.json` is found, the parser proceeds normally without creating `details.json`.
+8. **Security & Path Safety**: Use `_safe_join` for all destination path resolution to strictly prevent directory traversal. Folder names are sanitized against Windows reserved names (`CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`) and trailing dots/spaces. Reading `toc.json` and `meta.json` (internal and external) is subject to `MAX_FILE_SIZE` bounds checking. Sort keys and chapter formatting are cached with `@lru_cache`.
 
 ### Typing & Code Style
 - Use strict typing annotations (e.g., `List`, `Dict`, `Tuple`, `Any` from `typing`).
