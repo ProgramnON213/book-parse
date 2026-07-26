@@ -770,14 +770,48 @@ class TestParser(unittest.TestCase):
                 success = process_single_book(rar_path, output_dir)
                 self.assertTrue(success)
 
-
                 book_dir = os.path.join(output_dir, "local", "RarBook")
                 self.assertTrue(os.path.exists(os.path.join(book_dir, "cover.jpg")))
                 self.assertTrue(os.path.exists(os.path.join(book_dir, "chapter_1", "image_1.jpg")))
 
+    def test_rarfile_missing_unrar_cli_tool(self):
+        import tempfile
+        from unittest.mock import patch, MagicMock
+        import parser
+        from parser import process_single_book
+
+        class MockRarCannotExec(Exception):
+            pass
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            rar_path = os.path.join(tmp_dir, "RarBook.rar")
+            with open(rar_path, "wb") as f:
+                f.write(b"Rar!\x1a\x07\x00dummy")
+
+            mock_rarfile_mod = MagicMock()
+            mock_rarfile_mod.is_rarfile.return_value = True
+            mock_rarfile_mod.RarCannotExec = MockRarCannotExec
+            mock_rarfile_mod.Error = Exception
+
+            mock_info_cover = MagicMock(filename="RarBook - c001 - p000 [Cover].jpg", file_size=10)
+            mock_info_cover.isdir.return_value = False
+            mock_info_cover.is_dir.return_value = False
+
+            mock_rf_instance = MagicMock()
+            mock_rf_instance.infolist.return_value = [mock_info_cover]
+            mock_rf_instance.read.side_effect = MockRarCannotExec("Cannot find working tool")
+
+            mock_rarfile_mod.RarFile.return_value = mock_rf_instance
+
+            with patch.object(parser, 'rarfile', mock_rarfile_mod), patch.object(parser, 'HAS_RARFILE', True):
+                output_dir = os.path.join(tmp_dir, "output")
+                success = process_single_book(rar_path, output_dir)
+                self.assertFalse(success)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

@@ -241,8 +241,11 @@ def load_toc_data(archive_path: str, z: ArchiveReader) -> Tuple[Optional[Dict[st
                 if isinstance(data, dict) and "chapters" in data and isinstance(data["chapters"], list):
                     return data, raw_str
             except Exception as e:
+                if HAS_RARFILE and rarfile and hasattr(rarfile, 'RarCannotExec') and isinstance(e, rarfile.RarCannotExec):
+                    raise e
                 print(f"Warning: Found 'toc.json' inside archive but failed to parse: {e}")
                 return None, ""
+
 
     # 2. Search alongside archive file in source directory
     stem = os.path.splitext(archive_path)[0]
@@ -431,11 +434,16 @@ def process_single_book(archive_path: str, output_dir: str) -> bool:
         print(f"Error: '{file_name}' is a corrupted zip archive: {e}. Skipping.")
         return False
     except Exception as e:
-        if HAS_RARFILE and rarfile and isinstance(e, rarfile.Error):
-            print(f"Error: '{file_name}' is a corrupted rar archive: {e}. Skipping.")
-            return False
+        if HAS_RARFILE and rarfile:
+            if hasattr(rarfile, 'RarCannotExec') and isinstance(e, rarfile.RarCannotExec):
+                print(f"Warning: '{file_name}' requires an unrar CLI tool (e.g. 'unrar', 'bsdtar', or '7z') on your system PATH: {e}. Skipping.")
+                return False
+            if isinstance(e, rarfile.Error):
+                print(f"Error: '{file_name}' is a corrupted rar archive: {e}. Skipping.")
+                return False
         print(f"Error processing book '{file_name}': {e}. Skipping.")
         return False
+
 
 def process_books(source_dir: str, output_dir: str, archive_dir: str = "./archive") -> Dict[str, int]:
     """
