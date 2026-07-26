@@ -219,7 +219,6 @@ def is_cover_image(filename: str) -> bool:
     """
     return "[Cover]" in filename or "p000" in filename
 
-@lru_cache(maxsize=1024)
 def format_chapter_folder_name(chapter_id: str) -> str:
     """
     Formats the chapter folder name based on the chapter ID.
