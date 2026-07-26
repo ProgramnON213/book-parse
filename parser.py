@@ -322,8 +322,11 @@ def group_pages_by_toc(pages: List[PageInfo], toc_data: Dict[str, Any]) -> Dict[
         else:
             # Check if page falls strictly inside any defined chapter range
             assigned_id = None
+            prev_chap_id = resolved_chapters[0]["resolved_id"]
             for chap in resolved_chapters:
                 s_p = chap.get("start_page", 1)
+                if s_p <= i:
+                    prev_chap_id = chap["resolved_id"]
                 e_p = chap.get("end_page")
                 if s_p <= i and (e_p is None or i <= e_p):
                     assigned_id = chap["resolved_id"]
@@ -331,10 +334,6 @@ def group_pages_by_toc(pages: List[PageInfo], toc_data: Dict[str, Any]) -> Dict[
 
             if assigned_id is None:
                 # Gap between chapters: isolate into extra folder of preceding chapter
-                prev_chap_id = resolved_chapters[0]["resolved_id"]
-                for chap in resolved_chapters:
-                    if chap.get("start_page", 1) <= i:
-                        prev_chap_id = chap["resolved_id"]
                 p_num, p_extra = natural_chapter_sort_key(prev_chap_id)
                 assigned_id = f"c{p_num:03d}x{p_extra + 1}" if p_num != 9999 else f"{prev_chap_id}_extra_1"
 
