@@ -29,7 +29,7 @@ python -m unittest discover -s tests
 ## Code & Testing Conventions
 
 ### Project Constraints
-1. **Archive Type**: Supports ZIP (`.zip`, `.cbz`) and RAR (`.rar`, `.cbr`) archives containing image files. Uses `ArchiveReader` to wrap built-in `zipfile` and optional `rarfile` modules. If a `.rar` archive is encountered without `rarfile` installed, a clear warning is logged and the file is skipped. Non-image files (`.txt`, `.nfo`), hidden files (`.DS_Store`), and `__MACOSX` directories are ignored.
+1. **Archive & Directory Support**: Supports ZIP (`.zip`, `.cbz`), RAR (`.rar`, `.cbr`), and uncompressed book directories in `--source` containing image files. Uses `ArchiveReader` to unify file archives and directory scanning. If a `.rar` archive is encountered without `rarfile` or `unrar` CLI installed, a clear warning is logged and the file is skipped. Non-image files (`.txt`, `.nfo`), hidden files (`.DS_Store`), and `__MACOSX` directories are ignored.
 2. **Page Formats & Filenames**: Extract page files directly without transcoding, preserving their original format and extension (supporting `.webp`, `.jpg`, `.jpeg`, `.png`). Only convert the cover image page to JPEG format (`cover.jpg`). Supports both `p001` tagged pages and plain numerical filenames (e.g. `1.jpg`, `2.jpg`).
 3. **Chapter Folder Formatting**:
    - Chapter IDs are of the form `c\d+(?:x\d+)?` (e.g. `c001`, `c005x1`). Files without chapter tags default to `chapter_1`.

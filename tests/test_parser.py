@@ -836,9 +836,65 @@ class TestParser(unittest.TestCase):
                 success = process_single_book(rar_path, output_dir)
                 self.assertFalse(success)
 
+    def test_archive_reader_directory(self):
+        import tempfile
+        from parser import ArchiveReader
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            book_dir = os.path.join(tmp_dir, "UncompressedBook")
+            os.makedirs(book_dir)
+            file1 = os.path.join(book_dir, "page1.jpg")
+            with open(file1, "wb") as f:
+                f.write(b"fake_image_data")
+
+            self.assertTrue(ArchiveReader.is_archive(book_dir))
+            with ArchiveReader(book_dir) as reader:
+                self.assertEqual(reader.archive_type, "dir")
+                infolist = reader.infolist()
+                self.assertEqual(len(infolist), 1)
+                self.assertEqual(infolist[0].filename, "page1.jpg")
+                self.assertFalse(infolist[0].is_dir())
+                self.assertEqual(reader.read("page1.jpg"), b"fake_image_data")
+
+    def test_process_books_directory(self):
+        import tempfile
+        from PIL import Image
+        import io
+        from parser import process_books
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_dir = os.path.join(tmp_dir, "source")
+            output_dir = os.path.join(tmp_dir, "output")
+            archive_dir = os.path.join(tmp_dir, "archive")
+            os.makedirs(source_dir)
+            os.makedirs(output_dir)
+
+            book_dir_path = os.path.join(source_dir, "My Uncompressed Book")
+            os.makedirs(book_dir_path)
+
+            img = Image.new('RGB', (1, 1), color='blue')
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG')
+            img_bytes = buf.getvalue()
+
+            with open(os.path.join(book_dir_path, "My Book - c001 - p000 [Cover].jpg"), "wb") as f:
+                f.write(img_bytes)
+            with open(os.path.join(book_dir_path, "My Book - c001 - p001.jpg"), "wb") as f:
+                f.write(img_bytes)
+
+            summary = process_books(source_dir, output_dir, archive_dir=archive_dir)
+            self.assertEqual(summary["total_found"], 1)
+            self.assertEqual(summary["successfully_parsed"], 1)
+            self.assertEqual(summary["archived"], 1)
+
+            parsed_book_dir = os.path.join(output_dir, "local", "My Uncompressed Book")
+            self.assertTrue(os.path.exists(os.path.join(parsed_book_dir, "cover.jpg")))
+            self.assertTrue(os.path.exists(os.path.join(parsed_book_dir, "chapter_1", "image_1.jpg")))
+            self.assertTrue(os.path.exists(os.path.join(archive_dir, "My Uncompressed Book")))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

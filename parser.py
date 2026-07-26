@@ -36,7 +36,7 @@ class ArchiveEntry:
 
 class ArchiveReader:
     """
-    Unified context manager wrapper for zipfile.ZipFile and rarfile.RarFile archives.
+    Unified context manager wrapper for zipfile.ZipFile, rarfile.RarFile archives, and uncompressed book directories.
     """
     def __init__(self, archive_path: str):
         self.archive_path = archive_path
@@ -49,6 +49,8 @@ class ArchiveReader:
             return True
         if HAS_RARFILE and rarfile and rarfile.is_rarfile(path):
             return True
+        if os.path.isdir(path):
+            return True
         return False
 
     def __enter__(self):
@@ -60,16 +62,31 @@ class ArchiveReader:
             self.archive_type = 'rar'
             self.archive_obj = rarfile.RarFile(self.archive_path, 'r')
             return self
+        elif os.path.isdir(self.archive_path):
+            self.archive_type = 'dir'
+            return self
         elif self.archive_path.lower().endswith('.rar') and not HAS_RARFILE:
             raise ImportError("Processing '.rar' archives requires the 'rarfile' Python package. Please install it with 'pip install rarfile'.")
         else:
-            raise ValueError(f"'{os.path.basename(self.archive_path)}' is not a valid zip or rar archive.")
+            raise ValueError(f"'{os.path.basename(self.archive_path)}' is not a valid zip/rar archive or directory.")
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.archive_obj:
             self.archive_obj.close()
 
     def infolist(self) -> List[ArchiveEntry]:
+        if self.archive_type == 'dir':
+            entries = []
+            for root, dirs, files in os.walk(self.archive_path):
+                for f in files:
+                    full_p = os.path.join(root, f)
+                    rel_p = os.path.relpath(full_p, self.archive_path).replace('\\', '/')
+                    entries.append(ArchiveEntry(rel_p, os.path.getsize(full_p), False))
+                for d in dirs:
+                    full_p = os.path.join(root, d)
+                    rel_p = os.path.relpath(full_p, self.archive_path).replace('\\', '/')
+                    entries.append(ArchiveEntry(rel_p, 0, True))
+            return entries
         return [
             ArchiveEntry(
                 info.filename,
@@ -80,11 +97,18 @@ class ArchiveReader:
         ]
 
     def read(self, name: str) -> bytes:
+        if self.archive_type == 'dir':
+            file_path = _safe_join(self.archive_path, name)
+            with open(file_path, 'rb') as f:
+                return f.read()
         return self.archive_obj.read(name)
 
-
     def open(self, name: str):
+        if self.archive_type == 'dir':
+            file_path = _safe_join(self.archive_path, name)
+            return open(file_path, 'rb')
         return self.archive_obj.open(name)
+
 
 # Pre-compiled regular expressions for parsing chapter IDs and page info
 CHAPTER_PATTERN_PREFER = re.compile(r' - (c\d+(?:x\d+)?)\b')
@@ -473,8 +497,8 @@ def process_single_book(archive_path: str, output_dir: str) -> bool:
 
 def process_books(source_dir: str, output_dir: str, archive_dir: str = "./archive") -> Dict[str, int]:
     """
-    Processes all CBR, CBZ, ZIP, and RAR books in source_dir, organizing them into output_dir.
-    Moves successfully parsed files into archive_dir if specified.
+    Processes all CBR, CBZ, ZIP, and RAR books and uncompressed book directories in source_dir, organizing them into output_dir.
+    Moves successfully parsed files/directories into archive_dir if specified.
     Returns a summary dictionary of execution metrics.
     """
     summary = {
@@ -488,15 +512,22 @@ def process_books(source_dir: str, output_dir: str, archive_dir: str = "./archiv
         print(f"Source directory '{source_dir}' does not exist.")
         return summary
 
-    book_files = sorted([f for f in os.listdir(source_dir) if f.lower().endswith(('.cbr', '.cbz', '.zip', '.rar'))])
-    if not book_files:
-        print(f"No .cbr, .cbz, .zip, or .rar files found in '{source_dir}'.")
+    book_items = []
+    for item in sorted(os.listdir(source_dir)):
+        full_p = os.path.join(source_dir, item)
+        if os.path.isfile(full_p) and item.lower().endswith(('.cbr', '.cbz', '.zip', '.rar')):
+            book_items.append(item)
+        elif os.path.isdir(full_p) and not item.startswith('.') and item.lower() != '__macosx':
+            book_items.append(item)
+
+    if not book_items:
+        print(f"No .cbr, .cbz, .zip, .rar files or book directories found in '{source_dir}'.")
         return summary
 
-    summary["total_found"] = len(book_files)
-    print(f"Found {len(book_files)} books to process.")
+    summary["total_found"] = len(book_items)
+    print(f"Found {len(book_items)} books to process.")
 
-    for file_name in book_files:
+    for file_name in book_items:
         archive_path = os.path.join(source_dir, file_name)
         print(f"\nProcessing book: '{file_name}'")
         success = process_single_book(archive_path, output_dir)
@@ -508,6 +539,7 @@ def process_books(source_dir: str, output_dir: str, archive_dir: str = "./archiv
                 print(f"Archived '{file_name}' -> '{archived_file}'")
         else:
             summary["failed"] += 1
+
 
     print("\nProcessing complete!")
     print("=" * 50)
