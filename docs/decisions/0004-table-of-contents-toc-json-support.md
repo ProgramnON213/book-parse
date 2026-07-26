@@ -22,9 +22,9 @@ We needed to:
 2. **Page-Range Slicing & Outlier Routing**:
    - Sort all valid image pages naturally into a 1-indexed ordered list.
    - Assign images within `[start_page, end_page]` ranges to their corresponding chapter IDs (e.g. `c001` -> `chapter_1`).
+   - Chapter entries in `toc.json` without explicit `cXXXX` IDs (e.g. `finale`, `appendix`, `afterword`) are assigned sequential chapter IDs (`c007` -> `chapter_7`, `c008` -> `chapter_8`), continuing monotonically from the highest numeric chapter ID.
    - Leading pages before Chapter 1 (`i < first_chapter.start_page`) are assigned to `c000` (`chapter_0`).
-   - Intermediate gap pages between chapters are merged into the preceding chapter.
-   - Trailing pages after the last chapter (`i > last_chapter.end_page`) are assigned to an extra chapter derived from the last chapter's ID (e.g. `c002x1` -> `chapter_2_extra_1`).
+   - Intermediate gap pages between chapters and trailing pages past the last chapter are strictly isolated into extra chapters (`c{N}x1` -> `chapter_N_extra_1`).
 3. **Output Metadata Preservation**:
    - Copy/write `toc.json` to `output/local/[BookName]/toc.json` whenever present.
 4. **Graceful Fallback**:

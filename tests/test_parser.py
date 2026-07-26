@@ -638,6 +638,34 @@ class TestParser(unittest.TestCase):
             self.assertEqual(len(ch2_files), 2)
             self.assertEqual(len(extra_files), 2)
 
+    def test_group_pages_by_toc_named_sections(self):
+        from parser import group_pages_by_toc, PageInfo
+        pages = [PageInfo(name=f"p{i:03d}.jpg", chapter=None, page=i, is_cover=False) for i in range(1, 13)]
+        toc_data = {
+            "title": "Book with named sections",
+            "chapters": [
+                {"id": "c001", "chapter": "CH 1", "start_page": 3, "end_page": 4},
+                {"id": "c002", "chapter": "CH 2", "start_page": 5, "end_page": 6},
+                {"id": "finale", "chapter": "Finale", "start_page": 7, "end_page": 8},
+                {"id": "appendix", "chapter": "Appendix", "start_page": 9, "end_page": 10}
+            ]
+        }
+
+        groups = group_pages_by_toc(pages, toc_data)
+        self.assertIn("c000", groups)
+        self.assertIn("c001", groups)
+        self.assertIn("c002", groups)
+        self.assertIn("c003", groups)
+        self.assertIn("c004", groups)
+        self.assertIn("c004x1", groups)
+
+        self.assertEqual([p.name for p in groups["c000"]], ["p001.jpg", "p002.jpg"])
+        self.assertEqual([p.name for p in groups["c001"]], ["p003.jpg", "p004.jpg"])
+        self.assertEqual([p.name for p in groups["c002"]], ["p005.jpg", "p006.jpg"])
+        self.assertEqual([p.name for p in groups["c003"]], ["p007.jpg", "p008.jpg"])
+        self.assertEqual([p.name for p in groups["c004"]], ["p009.jpg", "p010.jpg"])
+        self.assertEqual([p.name for p in groups["c004x1"]], ["p011.jpg", "p012.jpg"])
+
     def test_safe_join(self):
         from parser import _safe_join
         import tempfile

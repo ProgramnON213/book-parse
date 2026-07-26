@@ -274,21 +274,38 @@ def load_toc_data(archive_path: str, z: ArchiveReader) -> Tuple[Optional[Dict[st
 def group_pages_by_toc(pages: List[PageInfo], toc_data: Dict[str, Any]) -> Dict[str, List[PageInfo]]:
     """
     Groups page information by Table of Contents chapter definitions using start_page and end_page ranges.
+    Non-cXXXX chapter IDs (e.g. 'finale', 'appendix') are assigned sequential chapter IDs (c001, c002...).
     Leading pages before Chapter 1 are routed to c000 (chapter_0).
-    Intermediate gap pages are merged into the preceding chapter.
-    Trailing pages after the last chapter are routed to an extra chapter (e.g. c002x1 -> chapter_2_extra_1).
+    Pages outside explicit TOC ranges are isolated into extra folders (c{N}x1 -> chapter_N_extra_1).
     """
     sorted_all_pages = sorted(pages, key=lambda x: (natural_chapter_sort_key(x.chapter or "c001"), x.page, x.name))
-    chapters = toc_data.get("chapters", [])
+    raw_chapters = toc_data.get("chapters", [])
 
-    if not chapters:
+    if not raw_chapters:
         chapter_groups = defaultdict(list)
         chapter_groups["c001"].extend(sorted_all_pages)
         return chapter_groups
 
-    first_start = chapters[0].get("start_page", 1)
-    last_end = chapters[-1].get("end_page")
-    last_chap_id = chapters[-1].get("id") or f"c{len(chapters):03d}"
+    resolved_chapters = []
+    current_chap_num = 0
+
+    for chap in raw_chapters:
+        raw_id = chap.get("id") or ""
+        chap_num, extra_num = natural_chapter_sort_key(raw_id)
+        if chap_num != 9999:
+            current_chap_num = max(current_chap_num, chap_num)
+            res_id = raw_id
+        else:
+            current_chap_num += 1
+            res_id = f"c{current_chap_num:03d}"
+
+        c_copy = dict(chap)
+        c_copy["resolved_id"] = res_id
+        resolved_chapters.append(c_copy)
+
+    first_start = resolved_chapters[0].get("start_page", 1)
+    last_end = resolved_chapters[-1].get("end_page")
+    last_chap_id = resolved_chapters[-1]["resolved_id"]
 
     chap_num, extra_num = natural_chapter_sort_key(last_chap_id)
     trailing_extra_id = f"c{chap_num:03d}x{extra_num + 1}" if chap_num != 9999 else f"{last_chap_id}_extra_1"
@@ -303,13 +320,23 @@ def group_pages_by_toc(pages: List[PageInfo], toc_data: Dict[str, Any]) -> Dict[
             # Trailing pages past last chapter -> chapter_N_extra_1
             chapter_groups[trailing_extra_id].append(page_obj)
         else:
-            # Page within defined range or gap between chapters
-            assigned_id = chapters[0].get("id") or "c001"
-            for chap in chapters:
-                if chap.get("start_page", 1) <= i:
-                    assigned_id = chap.get("id") or assigned_id
-                if chap.get("end_page") is not None and i <= chap["end_page"]:
+            # Check if page falls strictly inside any defined chapter range
+            assigned_id = None
+            for chap in resolved_chapters:
+                s_p = chap.get("start_page", 1)
+                e_p = chap.get("end_page")
+                if s_p <= i and (e_p is None or i <= e_p):
+                    assigned_id = chap["resolved_id"]
                     break
+
+            if assigned_id is None:
+                # Gap between chapters: isolate into extra folder of preceding chapter
+                prev_chap_id = resolved_chapters[0]["resolved_id"]
+                for chap in resolved_chapters:
+                    if chap.get("start_page", 1) <= i:
+                        prev_chap_id = chap["resolved_id"]
+                p_num, p_extra = natural_chapter_sort_key(prev_chap_id)
+                assigned_id = f"c{p_num:03d}x{p_extra + 1}" if p_num != 9999 else f"{prev_chap_id}_extra_1"
 
             chapter_groups[assigned_id].append(page_obj)
 

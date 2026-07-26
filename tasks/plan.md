@@ -1,23 +1,27 @@
-# Implementation Plan: Route Outlier ToC Pages (chapter_0 and chapter_N_extra_1)
+# Implementation Plan: Non-cXXXX Chapter Auto-Numbering & Strict Non-TOC Extra Slicing
 
 ## Overview
-Refactor `group_pages_by_toc` in `parser.py` so pages falling outside defined `toc.json` chapter boundaries are routed cleanly:
-1. Pages before Chapter 1 (`page_index < first_chapter.start_page`) are grouped into `c000` (`chapter_0`).
-2. Gap pages between intermediate chapters are merged into the preceding chapter.
-3. Trailing pages after the last chapter (`page_index > last_chapter.end_page`) are placed into an extra chapter folder derived from the last chapter ID (e.g., `c010x1` -> `chapter_10_extra_1`).
+Update `group_pages_by_toc` in `parser.py` to:
+1. Sequentially resolve non-`cXXXX` chapter IDs in `toc.json` (such as `finale`, `appendix`, `afterword`, `ch1`, or missing IDs) into continuous numeric chapter IDs (`c007` -> `chapter_7`, `c008` -> `chapter_8`), continuing from the highest numeric chapter ID.
+2. Strictly isolate images not covered by explicit `[start_page, end_page]` ranges in `toc.json` into extra folders (`chapter_0` for leading pages, `chapter_N_extra_1` for gap and trailing pages).
 
 ## Architecture Decisions
-- **`c000` for Front Matter**: Front matter / cover pages before page 1 are mapped to `c000`, which formats to `chapter_0`.
-- **`c{last}x1` for Trailing Pages**: Trailing pages past the last chapter's `end_page` receive an incremented extra ID based on the last chapter's ID (`c{num}x{extra+1}`).
-- **Intermediate Gap Handling**: Gap pages between chapter ranges are assigned to the preceding chapter.
+- **Monotonic Chapter ID Resolution**:
+  - Maintain a running `current_chap_num` counter.
+  - Preserved IDs: `c001` .. `c006` update `current_chap_num = 6`.
+  - Non-`cXXXX` IDs: `current_chap_num += 1`, assigning `f"c{current_chap_num:03d}"` (`c007`, `c008`, etc.).
+- **Strict Range Isolation**:
+  - Pages inside `[start_page, end_page]` belong to `chapter_[N]`.
+  - Leading pages (`i < first_start`): `c000` -> `chapter_0`.
+  - Intermediate gap pages & trailing pages: `c{N}x1` -> `chapter_N_extra_1`.
 
 ## Task List
 
-### Phase 1: Outlier Page Routing Logic
-- [ ] Task 1: Update `group_pages_by_toc` in `parser.py` with `c000` front-matter routing, intermediate gap assignment, and `c{last}x1` trailing extra routing.
+### Phase 1: Implementation
+- [ ] Task 1: Update `group_pages_by_toc` in `parser.py` to auto-number non-`cXXXX` chapter entries and strictly isolate non-TOC pages into extra folders.
 
 ### Phase 2: Unit Testing & Verification
-- [ ] Task 2: Add comprehensive unit tests in `tests/test_parser.py` covering front-matter pages (`chapter_0`), intermediate gap pages, and trailing pages (`chapter_N_extra_1`).
+- [ ] Task 2: Add unit test `test_group_pages_by_toc_named_sections` in `tests/test_parser.py` covering named sections (`finale`, `appendix`) after `c006`, verifying `chapter_7`, `chapter_8` generation.
 - [ ] Task 3: Execute test suite (`python -m unittest discover -s tests`) and confirm 100% pass rate.
 
 ### Checkpoint: Complete
