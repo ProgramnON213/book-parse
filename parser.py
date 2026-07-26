@@ -203,33 +203,44 @@ def load_toc_data(archive_path: str, z: zipfile.ZipFile) -> Tuple[Optional[Dict[
 def group_pages_by_toc(pages: List[PageInfo], toc_data: Dict[str, Any]) -> Dict[str, List[PageInfo]]:
     """
     Groups page information by Table of Contents chapter definitions using start_page and end_page ranges.
-    Sorted pages are evaluated against 1-indexed page position indices.
+    Leading pages before Chapter 1 are routed to c000 (chapter_0).
+    Intermediate gap pages are merged into the preceding chapter.
+    Trailing pages after the last chapter are routed to an extra chapter (e.g. c002x1 -> chapter_2_extra_1).
     """
     sorted_all_pages = sorted(pages, key=lambda x: (natural_chapter_sort_key(x.chapter or "c001"), x.page, x.name))
     chapters = toc_data.get("chapters", [])
 
+    if not chapters:
+        chapter_groups = defaultdict(list)
+        chapter_groups["c001"].extend(sorted_all_pages)
+        return chapter_groups
+
+    first_start = chapters[0].get("start_page", 1)
+    last_end = chapters[-1].get("end_page")
+    last_chap_id = chapters[-1].get("id") or f"c{len(chapters):03d}"
+
+    chap_num, extra_num = natural_chapter_sort_key(last_chap_id)
+    trailing_extra_id = f"c{chap_num:03d}x{extra_num + 1}" if chap_num != 9999 else f"{last_chap_id}_extra_1"
+
     chapter_groups = defaultdict(list)
-    assigned_page_names = set()
 
-    for idx, chap in enumerate(chapters, start=1):
-        chap_id = chap.get("id") or f"c{idx:03d}"
-        start_p = chap.get("start_page", 1)
-        end_p = chap.get("end_page")
+    for i, page_obj in enumerate(sorted_all_pages, start=1):
+        if i < first_start:
+            # Leading pages before Chapter 1 -> chapter_0
+            chapter_groups["c000"].append(page_obj)
+        elif last_end is not None and i > last_end:
+            # Trailing pages past last chapter -> chapter_N_extra_1
+            chapter_groups[trailing_extra_id].append(page_obj)
+        else:
+            # Page within defined range or gap between chapters
+            assigned_id = chapters[0].get("id") or "c001"
+            for chap in chapters:
+                if chap.get("start_page", 1) <= i:
+                    assigned_id = chap.get("id") or assigned_id
+                if chap.get("end_page") is not None and i <= chap["end_page"]:
+                    break
 
-        for i, page_obj in enumerate(sorted_all_pages, start=1):
-            if page_obj.name in assigned_page_names:
-                continue
-
-            in_range = (start_p <= i <= end_p) if end_p is not None else (i >= start_p)
-
-            if in_range:
-                chapter_groups[chap_id].append(page_obj)
-                assigned_page_names.add(page_obj.name)
-
-    unassigned = [p for p in sorted_all_pages if p.name not in assigned_page_names]
-    if unassigned:
-        fallback_id = chapters[0].get("id") if chapters else "c001"
-        chapter_groups[fallback_id].extend(unassigned)
+            chapter_groups[assigned_id].append(page_obj)
 
     return chapter_groups
 

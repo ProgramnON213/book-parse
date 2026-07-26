@@ -1,8 +1,5 @@
-# Todo Checklist: Table of Contents Support
+# Todo Checklist: Outlier Page Routing (chapter_0 & extra chapters)
 
-- [x] **Task 1**: Implement `load_toc_data` helper in `parser.py` (reads internal zip `toc.json` or external `[stem].toc.json`).
-- [x] **Task 2**: Implement `group_pages_by_toc` helper to slice image pages using `start_page` and `end_page` bounds.
-- [x] **Task 3**: Update `process_single_book` to check for `toc.json` and use `toc.json` grouping with fallback to regex matching.
-- [x] **Task 4**: Ensure `toc.json` file is saved to `output/local/[BookName]/toc.json`.
-- [x] **Task 5**: Add unit test coverage in `tests/test_parser.py` for embedded `toc.json`, external `toc.json`, missing `toc.json`, and malformed JSON fallback.
-- [x] **Task 6**: Execute test suite (`python -m unittest discover -s tests`) and confirm 100% pass.
+- [x] **Task 1**: Update `group_pages_by_toc` in `parser.py` to route leading pages (`i < first_start`) to `c000` (`chapter_0`), intermediate gap pages to preceding chapter, and trailing pages (`i > last_end`) to `c{last}x1` (`chapter_N_extra_1`).
+- [x] **Task 2**: Add unit tests in `tests/test_parser.py` for `chapter_0` front matter, intermediate gap pages, and trailing `chapter_N_extra_1` pages.
+- [x] **Task 3**: Execute test suite (`python -m unittest discover -s tests`) and confirm 100% pass rate.

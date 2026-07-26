@@ -10,6 +10,7 @@ __pycache__/
 # User data & outputs
 output/
 source/
+archive/
 
 # Environments
 .venv/

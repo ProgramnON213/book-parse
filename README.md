@@ -42,7 +42,7 @@ output/local/
 ## Naming Conventions & Logic
 - **Output Folder**: Named exactly after the book file (excluding the extension).
 - **Cover Image**: Extracted from the page flagged `[Cover]` or `p000` inside the archive, converted to RGB JPEG (safe transparency handling included), and saved as `cover.jpg`. If no cover marker exists, the first naturally sorted image page is automatically selected as `cover.jpg`.
-- **Table of Contents (`toc.json`)**: If `toc.json` is present inside the archive or alongside in `--source` (`[book_stem].toc.json`), its chapter page ranges (`start_page` to `end_page`) are used to group pages into chapters, and `toc.json` is saved to `output/local/[BookName]/toc.json`. If missing or invalid, the parser falls back to regex chapter extraction.
+- **Table of Contents (`toc.json`)**: If `toc.json` is present inside the archive or alongside in `--source` (`[book_stem].toc.json`), its chapter page ranges (`start_page` to `end_page`) are used to group pages into chapters, and `toc.json` is saved to `output/local/[BookName]/toc.json`. Outlier pages before Chapter 1 route to `chapter_0`, intermediate gap pages merge into the preceding chapter, and trailing pages after the last chapter route to an extra chapter (e.g. `chapter_10_extra_1`). If `toc.json` is missing or invalid, the parser falls back to regex chapter extraction.
 - **Chapter Folders**:
   - Standard chapters (e.g., `c001`) -> `chapter_1`
   - Extra chapters (e.g., `c005x1`) -> `chapter_5_extra_1`

@@ -581,6 +581,63 @@ class TestParser(unittest.TestCase):
             book_dir = os.path.join(output_dir, "local", "Invalid TOC Book")
             self.assertTrue(os.path.exists(os.path.join(book_dir, "chapter_1")))
 
+    def test_group_pages_by_toc_outliers(self):
+        import tempfile
+        import json
+        from PIL import Image
+        import io
+        from parser import process_books
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_dir = os.path.join(tmp_dir, "source")
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(source_dir)
+            os.makedirs(output_dir)
+
+            img = Image.new('RGB', (1, 1), color='purple')
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG')
+            jpg_bytes = buf.getvalue()
+
+            toc_content = {
+                "title": "Table of Contents",
+                "chapters": [
+                    {"id": "c001", "chapter": "CH 1", "start_page": 3, "end_page": 4},
+                    {"id": "c002", "chapter": "CH 2", "start_page": 5, "end_page": 6}
+                ]
+            }
+
+            book_path = os.path.join(source_dir, "Outlier TOC Book.cbz")
+            with zipfile.ZipFile(book_path, 'w') as z:
+                z.writestr("toc.json", json.dumps(toc_content))
+                z.writestr("p001.jpg", jpg_bytes)
+                z.writestr("p002.jpg", jpg_bytes)
+                z.writestr("p003.jpg", jpg_bytes)
+                z.writestr("p004.jpg", jpg_bytes)
+                z.writestr("p005.jpg", jpg_bytes)
+                z.writestr("p006.jpg", jpg_bytes)
+                z.writestr("p007.jpg", jpg_bytes)
+                z.writestr("p008.jpg", jpg_bytes)
+
+            summary = process_books(source_dir, output_dir, archive_dir="")
+            self.assertEqual(summary["successfully_parsed"], 1)
+
+            book_dir = os.path.join(output_dir, "local", "Outlier TOC Book")
+            self.assertTrue(os.path.exists(os.path.join(book_dir, "chapter_0")), "chapter_0 must exist for pages 1-2")
+            self.assertTrue(os.path.exists(os.path.join(book_dir, "chapter_1")), "chapter_1 must exist for pages 3-4")
+            self.assertTrue(os.path.exists(os.path.join(book_dir, "chapter_2")), "chapter_2 must exist for pages 5-6")
+            self.assertTrue(os.path.exists(os.path.join(book_dir, "chapter_2_extra_1")), "chapter_2_extra_1 must exist for trailing pages 7-8")
+
+            ch0_files = os.listdir(os.path.join(book_dir, "chapter_0"))
+            ch1_files = os.listdir(os.path.join(book_dir, "chapter_1"))
+            ch2_files = os.listdir(os.path.join(book_dir, "chapter_2"))
+            extra_files = os.listdir(os.path.join(book_dir, "chapter_2_extra_1"))
+
+            self.assertEqual(len(ch0_files), 2)
+            self.assertEqual(len(ch1_files), 2)
+            self.assertEqual(len(ch2_files), 2)
+            self.assertEqual(len(extra_files), 2)
+
     def test_safe_join(self):
         from parser import _safe_join
         import tempfile
