@@ -40,6 +40,7 @@ output/local/
 | Command | Description |
 |---------|-------------|
 | `python parser.py --source <dir> --output <dir> [--archive <dir>] [--meta n20]` | Runs the parser (archives parsed files by default) |
+| `python parser.py --max-book-size 4GB --max-file-size 200MB` | Runs parser with custom size limits (0 to disable) |
 | `python -m unittest discover -s tests` | Runs the full automated test suite |
 
 ## Naming Conventions & Logic
@@ -60,6 +61,7 @@ output/local/
 - **Security & Performance**:
   - **Path Traversal Protection**: Enforced atomic path bound checks (`_safe_join`) directly across all directory creation, archive moving, and file writing operations.
   - **Windows Reserved Names**: Automatically sanitizes Windows reserved filenames (`CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`) and strips trailing dots/spaces.
-  - **DoS Protection & DRY JSON Loading**: Unified internal/external JSON resolution helper (`_find_and_load_json`) enforces `MAX_FILE_SIZE` (100 MB) when reading `toc.json` and `meta.json` files.
+  - **DoS Protection & Configurable Size Ceilings**: Enforces `MAX_BOOK_UNCOMPRESSED_SIZE` (default 4 GB) and `MAX_FILE_SIZE` (default 200 MB), configurable via `--max-book-size` and `--max-file-size` (supports `B`, `KB`, `MB`, `GB`, `TB`, or `0` for unlimited).
   - **Stream Buffering & Focused Caching**: Uses 1 MB stream buffers (`shutil.copyfileobj`) for disk extraction and `@lru_cache` on high-frequency regex parsing routines.
+  - **Unicode Terminal Output**: Automatically reconfigures `stdout` and `stderr` to UTF-8 on Windows consoles to prevent encoding crashes on non-ASCII titles.
 
