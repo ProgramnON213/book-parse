@@ -999,6 +999,138 @@ class TestParser(unittest.TestCase):
             details2_path = os.path.join(book2_dir, "details.json")
             self.assertFalse(os.path.exists(details2_path))
 
+    def test_parse_size_valid_and_invalid(self):
+        from parser import parse_size
+        import argparse
+
+        self.assertEqual(parse_size("0"), 0)
+        self.assertEqual(parse_size(""), 0)
+        self.assertEqual(parse_size(1024), 1024)
+        self.assertEqual(parse_size("2048"), 2048)
+        self.assertEqual(parse_size("500B"), 500)
+        self.assertEqual(parse_size("10KB"), 10 * 1024)
+        self.assertEqual(parse_size("200MB"), 200 * 1024 * 1024)
+        self.assertEqual(parse_size("4GB"), 4 * 1024 * 1024 * 1024)
+        self.assertEqual(parse_size("1.5gb"), int(1.5 * 1024 * 1024 * 1024))
+        self.assertEqual(parse_size("1TB"), 1024 * 1024 * 1024 * 1024)
+
+        with self.assertRaises(argparse.ArgumentTypeError):
+            parse_size("invalid_size")
+        with self.assertRaises(argparse.ArgumentTypeError):
+            parse_size("100XYZ")
+
+    def test_process_single_book_exceeds_max_book_size(self):
+        import tempfile
+        from PIL import Image
+        import io
+        import parser
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_dir = os.path.join(tmp_dir, "source")
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(source_dir, exist_ok=True)
+
+            img = Image.new('RGB', (1, 1), color='blue')
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG')
+            img_bytes = buf.getvalue()
+
+            cbr_path = os.path.join(source_dir, "Large Book.cbz")
+            with zipfile.ZipFile(cbr_path, 'w') as z:
+                z.writestr("Large Book - c001 - p000 [Cover].jpg", img_bytes)
+                z.writestr("Large Book - c001 - p001.jpg", img_bytes)
+
+            # Test failure when archive total size exceeds custom max_book_size
+            summary = parser.process_books(
+                source_dir,
+                output_dir,
+                archive_dir="",
+                max_book_size=len(img_bytes)  # smaller than 2 images combined
+            )
+            self.assertEqual(summary["successfully_parsed"], 0)
+            self.assertEqual(summary["failed"], 1)
+
+            # Test success when max_book_size is large enough or disabled (0)
+            summary_ok = parser.process_books(
+                source_dir,
+                output_dir,
+                archive_dir="",
+                max_book_size=len(img_bytes) * 10
+            )
+            self.assertEqual(summary_ok["successfully_parsed"], 1)
+            self.assertEqual(summary_ok["failed"], 0)
+
+            # Test success with max_book_size=0 (unlimited)
+            summary_unlimited = parser.process_books(
+                source_dir,
+                output_dir,
+                archive_dir="",
+                max_book_size=0
+            )
+            self.assertEqual(summary_unlimited["successfully_parsed"], 1)
+
+    def test_process_single_book_custom_and_unlimited_max_file_size(self):
+        import tempfile
+        from PIL import Image
+        import io
+        import parser
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_dir = os.path.join(tmp_dir, "source")
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(source_dir, exist_ok=True)
+
+            img = Image.new('RGB', (1, 1), color='green')
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG')
+            img_bytes = buf.getvalue()
+
+            cbr_path = os.path.join(source_dir, "File Size Book.cbz")
+            with zipfile.ZipFile(cbr_path, 'w') as z:
+                z.writestr("File Size Book - c001 - p000 [Cover].jpg", img_bytes)
+                z.writestr("File Size Book - c001 - p001.jpg", img_bytes)
+
+            # Test failure when member exceeds max_file_size
+            summary_fail = parser.process_books(
+                source_dir,
+                output_dir,
+                archive_dir="",
+                max_file_size=5  # smaller than individual image
+            )
+            self.assertEqual(summary_fail["successfully_parsed"], 0)
+            self.assertEqual(summary_fail["failed"], 1)
+
+            # Test success with unlimited max_file_size (0)
+            summary_unlimited = parser.process_books(
+                source_dir,
+                output_dir,
+                archive_dir="",
+                max_file_size=0
+            )
+            self.assertEqual(summary_unlimited["successfully_parsed"], 1)
+
+    def test_cli_max_size_arguments_parsing(self):
+        from unittest.mock import patch
+        import parser
+
+        test_args = [
+            "parser.py",
+            "--source", "./my_source",
+            "--output", "./my_output",
+            "--max-book-size", "2GB",
+            "--max-file-size", "50MB"
+        ]
+        with patch("sys.argv", test_args), patch("parser.process_books") as mock_process:
+            parser.main()
+            mock_process.assert_called_once_with(
+                "./my_source",
+                "./my_output",
+                archive_dir="./archive",
+                meta_engine="n20",
+                max_book_size=2 * 1024 * 1024 * 1024,
+                max_file_size=50 * 1024 * 1024
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
