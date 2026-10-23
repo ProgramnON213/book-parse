@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 import json
 import zipfile
@@ -6,10 +7,22 @@ import argparse
 import shutil
 import datetime
 from functools import lru_cache
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any, Optional, Union, Callable
 from dataclasses import dataclass
 from collections import defaultdict
 from PIL import Image
+
+# Ensure stdout and stderr support UTF-8 on Windows consoles without crashing
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+if hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 try:
     import rarfile
@@ -155,8 +168,43 @@ def _safe_join(base_dir: str, *paths: str) -> str:
     return target
 
 # Security constraints to prevent Denial of Service (DoS) / Zip Bomb attacks
-MAX_FILE_SIZE = 100 * 1024 * 1024  # Max size for individual extracted files (100 MB)
-MAX_BOOK_UNCOMPRESSED_SIZE = 1024 * 1024 * 1024  # Max total uncompressed size for a book archive (1 GB)
+MAX_FILE_SIZE = 200 * 1024 * 1024  # Max size for individual extracted files (200 MB)
+MAX_BOOK_UNCOMPRESSED_SIZE = 4 * 1024 * 1024 * 1024  # Max total uncompressed size for a book archive (4 GB)
+
+def parse_size(val: Union[str, int]) -> int:
+    """
+    Parses a human-readable size string (e.g. '500MB', '2GB', '4G', '1073741824', '0') into bytes.
+    Returns 0 for unlimited / disabled.
+    """
+    if isinstance(val, (int, float)):
+        return int(val)
+    val = str(val).strip()
+    if not val:
+        return 0
+    if val.isdigit():
+        return int(val)
+    units = {
+        'b': 1,
+        'k': 1024,
+        'kb': 1024,
+        'kib': 1024,
+        'm': 1024 * 1024,
+        'mb': 1024 * 1024,
+        'mib': 1024 * 1024,
+        'g': 1024 * 1024 * 1024,
+        'gb': 1024 * 1024 * 1024,
+        'gib': 1024 * 1024 * 1024,
+        't': 1024 * 1024 * 1024 * 1024,
+        'tb': 1024 * 1024 * 1024 * 1024,
+        'tib': 1024 * 1024 * 1024 * 1024,
+    }
+    match = re.match(r'^([0-9.]+)\s*([a-zA-Z]+)$', val)
+    if match:
+        number, unit = match.groups()
+        unit_lower = unit.lower()
+        if unit_lower in units:
+            return int(float(number) * units[unit_lower])
+    raise argparse.ArgumentTypeError(f"Invalid size format: '{val}'. Expected e.g. '500MB', '4GB', or integer bytes.")
 
 def archive_source_file(source_file_path: str, archive_dir: str, base_dir: str = None) -> str:
     """
@@ -235,12 +283,14 @@ def _find_and_load_json(
     target_name: str,
     archive_path: str,
     z: ArchiveReader,
-    validator_fn=None
+    validator_fn: Optional[Callable[[Dict[str, Any]], bool]] = None,
+    max_file_size: Optional[int] = None
 ) -> Tuple[Optional[Dict[str, Any]], str]:
     """
     Generic helper to locate and parse a JSON file (e.g. 'toc.json', 'meta.json')
     from inside an archive or alongside archive_path. Enforces MAX_FILE_SIZE limits.
     """
+    eff_max_file_size = MAX_FILE_SIZE if max_file_size is None else max_file_size
     target_lower = target_name.lower()
 
     # 1. Search inside archive
@@ -249,7 +299,7 @@ def _find_and_load_json(
         is_system_path = any(p.startswith('.') or p.startswith('__MACOSX') for p in parts if p)
         base = os.path.basename(info.filename)
         if base.lower() == target_lower and not is_system_path:
-            if info.file_size > MAX_FILE_SIZE:
+            if eff_max_file_size > 0 and info.file_size > eff_max_file_size:
                 print(f"Warning: '{target_name}' inside archive exceeds size limit ({info.file_size} B). Skipping.")
                 return None, ""
             try:
@@ -274,7 +324,7 @@ def _find_and_load_json(
     for cand in candidates:
         if os.path.isfile(cand):
             file_size = os.path.getsize(cand)
-            if file_size > MAX_FILE_SIZE:
+            if eff_max_file_size > 0 and file_size > eff_max_file_size:
                 print(f"Warning: External file '{cand}' exceeds size limit ({file_size} B). Skipping.")
                 continue
             try:
@@ -288,7 +338,7 @@ def _find_and_load_json(
 
     return None, ""
 
-def load_toc_data(archive_path: str, z: ArchiveReader) -> Tuple[Optional[Dict[str, Any]], str]:
+def load_toc_data(archive_path: str, z: ArchiveReader, max_file_size: Optional[int] = None) -> Tuple[Optional[Dict[str, Any]], str]:
     """
     Attempts to locate and parse 'toc.json' from inside the archive or alongside archive_path.
     Enforces security size limits (MAX_FILE_SIZE) and filters out hidden/system paths.
@@ -297,10 +347,11 @@ def load_toc_data(archive_path: str, z: ArchiveReader) -> Tuple[Optional[Dict[st
         "toc.json",
         archive_path,
         z,
-        validator_fn=lambda d: "chapters" in d and isinstance(d["chapters"], list)
+        validator_fn=lambda d: "chapters" in d and isinstance(d["chapters"], list),
+        max_file_size=max_file_size
     )
 
-def load_meta_data(archive_path: str, z: ArchiveReader) -> Tuple[Optional[Dict[str, Any]], str]:
+def load_meta_data(archive_path: str, z: ArchiveReader, max_file_size: Optional[int] = None) -> Tuple[Optional[Dict[str, Any]], str]:
     """
     Attempts to locate and parse 'meta.json' from inside the archive or alongside archive_path.
     Enforces security size limits (MAX_FILE_SIZE) and filters out hidden/system paths.
@@ -309,7 +360,8 @@ def load_meta_data(archive_path: str, z: ArchiveReader) -> Tuple[Optional[Dict[s
         "meta.json",
         archive_path,
         z,
-        validator_fn=lambda d: True
+        validator_fn=lambda d: True,
+        max_file_size=max_file_size
     )
 
 STATUS_VALUES_DEFAULT = [
@@ -482,10 +534,18 @@ def _extract_and_write_pages(z: ArchiveReader, book_dir: str, chapter_groups: Di
             with z.open(p.name) as source, open(dest_path, 'wb') as target:
                 shutil.copyfileobj(source, target, length=BUFFER_SIZE)
 
-def process_single_book(archive_path: str, output_dir: str, meta_engine: str = "n20") -> bool:
+def process_single_book(
+    archive_path: str,
+    output_dir: str,
+    meta_engine: str = "n20",
+    max_book_size: Optional[int] = None,
+    max_file_size: Optional[int] = None
+) -> bool:
     """
     Processes a single CBR/CBZ/ZIP/RAR book archive. Returns True if successfully parsed, False otherwise.
     """
+    eff_max_book_size = MAX_BOOK_UNCOMPRESSED_SIZE if max_book_size is None else max_book_size
+    eff_max_file_size = MAX_FILE_SIZE if max_file_size is None else max_file_size
     file_name = os.path.basename(archive_path)
     book_folder_name = sanitize_folder_name(os.path.splitext(file_name)[0])
 
@@ -503,8 +563,8 @@ def process_single_book(archive_path: str, output_dir: str, meta_engine: str = "
         with ArchiveReader(archive_path) as z:
             total_uncompressed_size = 0
             for info in z.infolist():
-                if info.file_size > MAX_FILE_SIZE:
-                    raise ValueError(f"Archive member '{info.filename}' size ({info.file_size} B) exceeds maximum allowed size ({MAX_FILE_SIZE} B).")
+                if eff_max_file_size > 0 and info.file_size > eff_max_file_size:
+                    raise ValueError(f"Archive member '{info.filename}' size ({info.file_size} B) exceeds maximum allowed size ({eff_max_file_size} B).")
                 total_uncompressed_size += info.file_size
                 
                 base_name = os.path.basename(info.filename)
@@ -516,8 +576,8 @@ def process_single_book(archive_path: str, output_dir: str, meta_engine: str = "
                         is_cover=is_cover_image(base_name)
                     ))
             
-            if total_uncompressed_size > MAX_BOOK_UNCOMPRESSED_SIZE:
-                raise ValueError(f"Archive total uncompressed size ({total_uncompressed_size} B) exceeds maximum allowed size ({MAX_BOOK_UNCOMPRESSED_SIZE} B).")
+            if eff_max_book_size > 0 and total_uncompressed_size > eff_max_book_size:
+                raise ValueError(f"Archive total uncompressed size ({total_uncompressed_size} B) exceeds maximum allowed size ({eff_max_book_size} B).")
 
             if not pages:
                 print("Warning: No matching image pages found in this book.")
@@ -539,7 +599,7 @@ def process_single_book(archive_path: str, output_dir: str, meta_engine: str = "
                 print(f"Error converting cover image: {e}")
 
             # 2. Check for Table of Contents (toc.json) and group pages by chapter
-            toc_data, raw_toc_str = load_toc_data(archive_path, z)
+            toc_data, raw_toc_str = load_toc_data(archive_path, z, max_file_size=eff_max_file_size)
             if toc_data:
                 print("Found valid Table of Contents (toc.json). Using TOC page ranges for chapter grouping.")
                 chapter_groups = group_pages_by_toc(pages, toc_data)
@@ -558,7 +618,7 @@ def process_single_book(archive_path: str, output_dir: str, meta_engine: str = "
                     print(f"Warning: Failed to write output toc.json: {e}")
 
             # 3. Check for Metadata (meta.json) and generate details.json
-            meta_data, raw_meta_str = load_meta_data(archive_path, z)
+            meta_data, raw_meta_str = load_meta_data(archive_path, z, max_file_size=eff_max_file_size)
             if meta_data:
                 try:
                     details_dict = transform_meta_to_details(meta_data, meta_engine)
@@ -588,7 +648,14 @@ def process_single_book(archive_path: str, output_dir: str, meta_engine: str = "
         return False
 
 
-def process_books(source_dir: str, output_dir: str, archive_dir: str = "./archive", meta_engine: str = "n20") -> Dict[str, int]:
+def process_books(
+    source_dir: str,
+    output_dir: str,
+    archive_dir: str = "./archive",
+    meta_engine: str = "n20",
+    max_book_size: Optional[int] = None,
+    max_file_size: Optional[int] = None
+) -> Dict[str, int]:
     """
     Processes all CBR, CBZ, ZIP, and RAR books and uncompressed book directories in source_dir, organizing them into output_dir.
     Moves successfully parsed files/directories into archive_dir if specified.
@@ -623,7 +690,13 @@ def process_books(source_dir: str, output_dir: str, archive_dir: str = "./archiv
     for file_name in book_items:
         archive_path = os.path.join(source_dir, file_name)
         print(f"\nProcessing book: '{file_name}'")
-        success = process_single_book(archive_path, output_dir, meta_engine=meta_engine)
+        success = process_single_book(
+            archive_path,
+            output_dir,
+            meta_engine=meta_engine,
+            max_book_size=max_book_size,
+            max_file_size=max_file_size
+        )
         if success:
             summary["successfully_parsed"] += 1
             if archive_dir:
@@ -651,9 +724,20 @@ def main() -> None:
     parser.add_argument("--output", default="./output", help="Output directory to place parsed structure")
     parser.add_argument("--archive", default="./archive", help="Archive directory to move processed books (set empty string to disable)")
     parser.add_argument("--meta", default="n20", help="Metadata engine format (default: n20)")
+    parser.add_argument("--max-book-size", type=parse_size, default=None,
+                        help="Max total uncompressed size for a book archive (e.g. '4GB', '2048MB', 0 to disable; default: 4 GB)")
+    parser.add_argument("--max-file-size", type=parse_size, default=None,
+                        help="Max size for individual extracted files (e.g. '200MB', 0 to disable; default: 200 MB)")
     args = parser.parse_args()
 
-    process_books(args.source, args.output, archive_dir=args.archive, meta_engine=args.meta)
+    process_books(
+        args.source,
+        args.output,
+        archive_dir=args.archive,
+        meta_engine=args.meta,
+        max_book_size=args.max_book_size,
+        max_file_size=args.max_file_size
+    )
 
 
 if __name__ == "__main__":
